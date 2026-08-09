@@ -14,7 +14,7 @@ import Foundation
         }
 
         do {
-            let connection = try await SQLiteDatabase.open(atPath: tempPath, embeddingDimension: 4)
+            let connection = try await SQLiteDatabase.openConnection(atPath: tempPath, embeddingDimension: 4)
             try await connection.run(
                 """
                 INSERT INTO photos (id, latitude, longitude, captured_at, created_at, updated_at, is_live_photo)
@@ -33,7 +33,7 @@ import Foundation
             // `connection` drops out of scope here, closing the file.
         }
 
-        let reopened = try await SQLiteDatabase.open(atPath: tempPath, embeddingDimension: 4)
+        let reopened = try await SQLiteDatabase.openConnection(atPath: tempPath, embeddingDimension: 4)
         let ids = try await reopened.query("SELECT id FROM photos", map: { $0.columnText(0) })
         #expect(ids == ["asset-1"])
     }

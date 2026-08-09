@@ -3,7 +3,7 @@ import Testing
 
 @Suite struct SchemaTests {
     @Test func createsAllContractTablesPlusMetaCompanion() async throws {
-        let connection = try await SQLiteDatabase.openInMemory(embeddingDimension: 4)
+        let connection = try await SQLiteDatabase.openInMemoryConnection(embeddingDimension: 4)
         let tableNames = try await connection.query(
             "SELECT name FROM sqlite_master ORDER BY name",
             map: { $0.columnText(0) }
@@ -16,7 +16,7 @@ import Testing
     }
 
     @Test func photosTableColumnsMatchContract() async throws {
-        let connection = try await SQLiteDatabase.openInMemory(embeddingDimension: 4)
+        let connection = try await SQLiteDatabase.openInMemoryConnection(embeddingDimension: 4)
         let columnNames = try await connection.query(
             "PRAGMA table_info(photos)",
             map: { $0.columnText(1) } // PRAGMA table_info's 2nd column is the column name

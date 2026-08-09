@@ -4,8 +4,8 @@ import Foundation
 
 @Suite struct PhotoStoreUpsertTests {
     private func makeStore() async throws -> (store: SQLitePhotoStore, connection: SQLiteConnection) {
-        let connection = try await SQLiteDatabase.openInMemory(embeddingDimension: 4)
-        return (SQLitePhotoStore(connection: connection, embeddingDimension: 4), connection)
+        let (store, _) = try await SQLiteDatabase.openInMemory(embeddingDimension: 4)
+        return (store, store.connection)
     }
 
     private func rtreeRowCount(for connection: SQLiteConnection, assetID: String) async throws -> Int {
