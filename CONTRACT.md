@@ -10,7 +10,7 @@ Feature areas map 1:1 to `TODOS.md`'s Build Breakdown and to suggested branch na
 |---|---|---|
 | Photo/iCloud Extraction | `photo-icloud-extraction` | Produces `PhotoAsset` records, writes through `PhotoStore` |
 | Database Structure | `database-structure` | Implements `PhotoStore` and `PhotoQuery`, owns the SQL schema |
-| 3D Interactive Map | `3d-interactive-map` | The `WebViewBridge` message protocol, globe rendering |
+| 3D Interactive Map | `add-3dmap` | The `WebViewBridge` message protocol, globe rendering |
 | Q&A AI Agent | `q-and-a-ai-agent` | Agent tool schemas, calls `PhotoQuery` |
 | Embedding Pipeline | `embedding-pipeline` | Produces `EmbeddingRecord`, writes through `PhotoStore` |
 | Error Handling | `error-handling` | `AppError`, `RetryPolicy`, `ErrorReporting` — everyone else imports this |
@@ -92,7 +92,7 @@ protocol PhotoStore {
 }
 ```
 
-## Read interface (implemented by `database-structure`; called by `q-and-a-ai-agent` and `3d-interactive-map`)
+## Read interface (implemented by `database-structure`; called by `q-and-a-ai-agent` and `add-3dmap`)
 
 ```swift
 protocol PhotoQuery {
@@ -104,9 +104,9 @@ protocol PhotoQuery {
 }
 ```
 
-`3d-interactive-map` only needs `allActivePhotosWithLocation()` to build the initial globe view — it does not need the other three methods, and does not need to wait on `q-and-a-ai-agent`'s work.
+`add-3dmap` only needs `allActivePhotosWithLocation()` to build the initial globe view — it does not need the other three methods, and does not need to wait on `q-and-a-ai-agent`'s work.
 
-## Native \<-\> globe bridge (owned by `3d-interactive-map`)
+## Native \<-\> globe bridge (owned by `add-3dmap`)
 
 `WKScriptMessageHandler` JSON messages, one message type per line, native \<-\> JS via `WKWebView`.
 
@@ -211,7 +211,7 @@ Per `/plan-eng-review`: one shared `ErrorReporting` surface (consistent UI prese
 
 **Build first, or at least merge first:** `error-handling`. Every other feature imports `AppError`/`RetryPolicy`/`ErrorReporting`. It's small and has no dependencies on anything else in this doc — cheapest to get real and merged early so nobody's stubbing it out themselves.
 
-**Fully parallel from day one, against this contract:** `photo-icloud-extraction`, `database-structure`, `3d-interactive-map`, and `embedding-pipeline` can all start immediately. Each builds against the types and protocols above; none needs another feature's actual implementation. Use an in-memory mock of `PhotoStore`/`PhotoQuery` where you need one to test against.
+**Fully parallel from day one, against this contract:** `photo-icloud-extraction`, `database-structure`, `add-3dmap`, and `embedding-pipeline` can all start immediately. Each builds against the types and protocols above; none needs another feature's actual implementation. Use an in-memory mock of `PhotoStore`/`PhotoQuery` where you need one to test against.
 
 **Also parallel, but real correctness waits on `database-structure`:** `q-and-a-ai-agent` can be fully written and unit-tested against a mock `PhotoQuery` in parallel with everyone else. Whether it actually answers questions correctly can't be verified until `database-structure`'s real implementation exists to query against.
 
