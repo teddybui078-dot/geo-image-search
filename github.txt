@@ -1,0 +1,20 @@
+Pushing to github information
+github-user: teddybui078-dot
+github-email: teddybui078@gmail.com
+github-repo-name: geo-image-search
+github-repo-link: https://github.com/teddybui078-dot/geo-image-search
+
+Push each feature separately (on whatever branch you're working on).
+Within a feature, push each component/sub-piece separately too — small,
+frequent commits and pushes on the feature's own branch as each piece is
+done, not one big commit/push at the end. Makes version control and merges
+easier, especially when another worktree/branch depends on a shared type.
+
+Never push another worktree's branch, and never use push --all — only push
+the branch the current worktree is actually on.
+
+See CONTRACT.md for the locked interfaces (types, schemas, protocols) that
+parallel feature worktrees build against, and CLAUDE.md's "Parallel
+development / worktrees" section for the full workflow.
+
+Naming Conventions: Dont use prexies like chore: feat/ feature/ on any commits, keep naming conventions natural

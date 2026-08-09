@@ -15,4 +15,3 @@ DerivedData/
 # Local secrets (Keychain is used at runtime, but never commit stray key files)
 *.env
 *.pem
-github.txt
