@@ -22,7 +22,7 @@ What actually needs to be built, organized by subsystem. Cross-references DESIGN
 - Schema needs to carry: GPS presence/absence (no-GPS photos indexed but excluded from globe pins, not from date/semantic search), cached geocoded place name, soft-delete/updated timestamps
 
 ### 3. 3D Interactive Map
-- Globe library decision: CesiumJS vs. OpenGlobus — still open (licensing/cost, styling flexibility, bundle size)
+- ~~Globe library decision~~ **Resolved: OpenGlobus** — Apache-2.0, no ion account/token friction, lighter in the WKWebView, better fit for hand-coding a custom look. Tradeoff accepted: thinner docs, no built-in time-dynamic visualization for a future trip-recap/timeline feature.
 - `WKWebView` host + `WKScriptMessageHandler` bridge (native → JS pin data, JS → native query dispatch)
 - Native fallback UI if the webview fails to load or crashes (`WKNavigationDelegate`)
 - Pin rendering from SQLite data
@@ -31,7 +31,7 @@ What actually needs to be built, organized by subsystem. Cross-references DESIGN
 
 ### 4. Q&A AI Agent
 - Shared `PhotoQuery` repository (`byLocation`, `byDateRange`, `bySimilarity`, `clusterTrips`) — one query layer, not four independent SQL builders
-- LLM provider choice (OpenAI/Anthropic/local) — still open
+- ~~LLM provider choice~~ **Resolved: OpenAI API.**
 - Keychain storage for the API key, plus key UX (validation, missing-key state, quota exhaustion — see item 3 below)
 - Agent tool-calling loop over the four tools
 - Explicit param schemas per tool (see item 1 below)

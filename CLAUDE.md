@@ -116,8 +116,8 @@ Native macOS app. Grants real Photos/iCloud permission via PhotosKit (no upload/
 - PhotosKit for Photos/iCloud access — GPS from `PHAsset.location`, not manual EXIF parsing.
 - SQLite: R-Tree module for geospatial (lat/lon/radius) queries, sqlite-vec for embedding similarity — these solve different problems, do not conflate them.
 - CoreML (MobileCLIP or similar, TBD — TODOS.md item 5) for on-device photo/text embeddings.
-- CesiumJS or OpenGlobus (TBD — DESIGN.md Open Questions) rendered in a `WKWebView`, bridged to native Swift via `WKScriptMessageHandler`.
-- macOS Keychain for the LLM API key — never a config file or environment variable.
+- OpenGlobus (Apache-2.0) rendered in a `WKWebView`, bridged to native Swift via `WKScriptMessageHandler`.
+- OpenAI API for the LLM agent. macOS Keychain for the API key — never a config file or environment variable.
 - Swift Testing (`import Testing`, `@Test`/`#expect`) — not XCTest.
 
 ### Build commands
