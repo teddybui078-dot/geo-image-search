@@ -1,6 +1,57 @@
 # TODOS
 
-Deferred items surfaced during `/plan-eng-review` (2026-08-09), sourced from the Codex outside-voice pass on `DESIGN.md`. None of these block Next Steps 1-2; each notes which later step it gates.
+## Build Breakdown
+
+What actually needs to be built, organized by subsystem. Cross-references DESIGN.md's Next Steps and the deferred items below.
+
+### 1. Photo/iCloud Extraction
+- PhotosKit permission request flow (native Swift, `PHPhotoLibrary.requestAuthorization`)
+- Asset enumeration: list `PHAsset`s, pull GPS (`PHAsset.location`) + timestamp — no manual EXIF parsing needed
+- Asset identity model: `PHAsset.localIdentifier` as the stable ID, `deleted_at`/`updated_at` tracking so relaunches can diff the library
+- Relaunch sync strategy: one-shot full ingest vs. incremental diff — decide alongside the identity model, same decision
+- Reverse geocoding: CLGeocoder, ~1km bucketed + cached + throttled (lat/lon → place name)
+- Live Photos handled as photos (image component only, motion ignored)
+- iCloud-only assets: pull metadata/location without forcing a full-res download; defer full-res fetch to on-demand thumbnailing
+- Validate real GPS coverage % against your own library early (see item 6 below)
+- "Selected Photos" limited-access handling — currently deferred, flagged as a family-usability risk (see item 6 below)
+
+### 2. Database Structure
+- SQLite schema for photo metadata, keyed by `PHAsset.localIdentifier`
+- SQLite **R-Tree** virtual table for geospatial (lat/lon/radius) range queries — distinct from sqlite-vec, easy to conflate the two
+- **sqlite-vec** table for embedding similarity (backs `semantic_search`)
+- Schema needs to carry: GPS presence/absence (no-GPS photos indexed but excluded from globe pins, not from date/semantic search), cached geocoded place name, soft-delete/updated timestamps
+
+### 3. 3D Interactive Map
+- Globe library decision: CesiumJS vs. OpenGlobus — still open (licensing/cost, styling flexibility, bundle size)
+- `WKWebView` host + `WKScriptMessageHandler` bridge (native → JS pin data, JS → native query dispatch)
+- Native fallback UI if the webview fails to load or crashes (`WKNavigationDelegate`)
+- Pin rendering from SQLite data
+- LOD/clustering by zoom level, using the chosen library's built-in support — raw rendering performance at scale, distinct from visual burst/duplicate-photo clustering
+- Hand-tweaked custom styling (color palette, custom pin/marker glyphs) — explicitly not the library's default look
+
+### 4. Q&A AI Agent
+- Shared `PhotoQuery` repository (`byLocation`, `byDateRange`, `bySimilarity`, `clusterTrips`) — one query layer, not four independent SQL builders
+- LLM provider choice (OpenAI/Anthropic/local) — still open
+- Keychain storage for the API key, plus key UX (validation, missing-key state, quota exhaustion — see item 3 below)
+- Agent tool-calling loop over the four tools
+- Explicit param schemas per tool (see item 1 below)
+- `cluster_trips` definition: stop duration, travel-gap threshold, timezone handling (see item 2 below)
+- Eval suite: fixed question → expected tool + params + result set (see item 1 below)
+- Chat UI wired to the agent, updates the globe on response
+
+### 5. Embedding Pipeline (cross-cutting — feeds Database Structure, consumed by Q&A AI Agent)
+- CoreML embedding model selection (MobileCLIP variant — dimension, tokenizer, license) — see item 5 below, gates the sqlite-vec schema
+- Background-queue, bounded-concurrency generation with visible progress and an optional date-range scope for first-run indexing
+
+### 6. Error Handling (cross-cutting — spans Extraction, Database writes, and the Agent)
+- One shared error-reporting surface across PhotosKit, CLGeocoder, and LLM calls (consistent UI presentation)
+- Per-boundary retry policy for each (different failure semantics — PhotosKit/iCloud, geocoding rate limits, LLM timeouts/rate limits all behave differently)
+
+---
+
+## Deferred Items
+
+Surfaced during `/plan-eng-review` (2026-08-09), sourced from the Codex outside-voice pass on `DESIGN.md`. None of these block Next Steps 1-2; each notes which later step it gates.
 
 ## 1. Agent tool schemas + eval hardening
 
