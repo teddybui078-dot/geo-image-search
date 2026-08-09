@@ -138,3 +138,13 @@ Full app-bundle build (Photos entitlements, sandboxing, code signing) requires o
 
 - Framework: Swift Testing.
 - Agent tool-selection correctness is an eval, not a unit test — see `eval/README.md`. Not scripted CI in v1; run manually when the tool surface or prompts change (per DESIGN.md Success Criteria).
+
+### Parallel development / worktrees
+
+This project is meant to be built across multiple git worktrees at once — one feature per worktree, per branch. **Read `CONTRACT.md` before writing code in a worktree.** It locks the shared types, database schema, and protocols (`PhotoAsset`, `PhotoStore`, `PhotoQuery`, the native↔globe bridge messages, agent tool schemas, `AppError`/`RetryPolicy`) that every feature builds against — build against those shapes, not against another feature's actual implementation. `CONTRACT.md` also has a suggested branch name and merge-order guide per feature.
+
+If a worktree needs a shared type in `CONTRACT.md` to change, update `CONTRACT.md` on `main` (or flag it) before changing your branch's usage of it — a shared type drifting silently in one worktree is the exact merge-hell scenario `CONTRACT.md` exists to prevent.
+
+**Commit and push granularly.** Within a feature branch, commit and push each sub-component separately as it's done — not one giant commit at the end of the feature. This matches the global commit-incrementally convention, worth restating here since worktree agents in this repo run somewhat independently: smaller, frequent pushes on your own branch make merges predictable, especially when another worktree is depending on a type your branch touches. Push only the branch your current worktree is on — never push another worktree's branch or use `push --all`.
+
+See `github.txt` for this repo's GitHub push conventions (commit naming, account info).
