@@ -1,0 +1,5 @@
+Sources/CSQLite3/sqlite3.c linguist-vendored
+Sources/CSQLite3/include/sqlite3.h linguist-vendored
+Sources/CSQLite3/include/sqlite3ext.h linguist-vendored
+Sources/CSQLiteVec/sqlite-vec.c linguist-vendored
+Sources/CSQLiteVec/include/sqlite-vec.h linguist-vendored
