@@ -187,4 +187,28 @@ import Foundation
 
         #expect(results.map(\.id) == ["near-pole-across"])
     }
+
+    // Regression test: unlike the two tests above (where radiusKm exceeds
+    // the distance to the pole and the full-longitude-range fallback
+    // handles it), this radius stays under that threshold — so it exercises
+    // GeoMath.boundingBox's ordinary lonScale formula, which used to derive
+    // its longitude window from the query's own latitude rather than the
+    // pole-ward edge of the search box. That underestimates a spherical
+    // cap's true longitude extent near a pole: confirmed empty results
+    // against this exact scenario before the formula was changed to use
+    // the pole-ward edge latitude instead.
+    @Test func byLocationCoversFullCapExtentBelowThePoleDistanceThreshold() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        // ~93.57km from the query point by haversine (verified by hand) —
+        // inside the 100km radius, but outside the old formula's ±51.47°
+        // longitude window (needs roughly ±64°).
+        try await store.upsert([PhotoAssetFixtures.makeAsset(id: "wrapped", latitude: 89.5627, longitude: 56.472)])
+
+        let straightLineDistance = GeoMath.haversineDistanceKm(lat1: 89, lon1: 0, lat2: 89.5627, lon2: 56.472)
+        #expect(straightLineDistance < 100) // sanity check on the fixture itself
+
+        let results = try await query.byLocation(latitude: 89, longitude: 0, radiusKm: 100)
+
+        #expect(results.map(\.id) == ["wrapped"])
+    }
 }

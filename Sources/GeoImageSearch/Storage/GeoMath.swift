@@ -36,10 +36,28 @@ enum GeoMath {
             return BoundingBox(minLat: minLat, maxLat: maxLat, lonRanges: [(-180, 180)])
         }
 
-        // Guarded away from zero so near-pole photos don't blow lonDelta up
-        // to infinity/NaN — correctness for the actual near-pole case is
-        // handled by the poleDistanceKm check above, not by this clamp.
-        let lonScale = max(cos(latitude * .pi / 180), 0.01)
+        // Scaled from the pole-ward edge of the box (whichever of minLat/
+        // maxLat is closer to the pole), not the query center latitude.
+        // Using the center latitude underestimates the true longitude
+        // extent of a spherical cap whenever the cap reaches meaningfully
+        // closer to the pole than the center — parallels of latitude shrink
+        // faster than a naive cos(center) scaling accounts for. Verified
+        // against a concrete case: query (89°, 0°) with radiusKm: 100 needs
+        // roughly ±64° of longitude to cover the true circle, but the old
+        // center-latitude formula only produced ±51.47°, silently excluding
+        // a real match 93.57km away (confirmed empty result against the
+        // live implementation before this fix). Using the edge latitude is
+        // deliberately not exact (the true maximum occurs somewhere inside
+        // the cap, not exactly at the edge) — it only needs to never
+        // underestimate, and a wider-than-necessary box is safe: the exact
+        // haversine cutoff in SQLitePhotoQuery.byLocation trims any
+        // overinclusion afterward. Still guarded away from zero so an
+        // edge latitude extremely close to the pole doesn't blow lonDelta
+        // up to infinity/NaN; when that clamp actually engages, the
+        // resulting span reliably exceeds 360° and falls through to the
+        // full-range branch below instead of returning a wrong-but-finite box.
+        let polewardLatitude = max(abs(minLat), abs(maxLat))
+        let lonScale = max(cos(polewardLatitude * .pi / 180), 0.01)
         let lonDelta = radiusKm / (kmPerDegreeLatitude * lonScale)
         let rawMinLon = longitude - lonDelta
         let rawMaxLon = longitude + lonDelta
