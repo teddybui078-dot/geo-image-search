@@ -108,4 +108,42 @@ import Foundation
 
         #expect(results.map(\.id) == ["across-dateline"])
     }
+
+    // Symmetric to byLocationHandlesAntimeridianCrossing but crossing from
+    // the negative side (query longitude near -180, rawMinLon < -180) —
+    // GeoMath.boundingBox has a separate branch for this direction from the
+    // rawMaxLon > 180 branch the other test exercises, and a bug in one
+    // branch wouldn't be caught by a test of only the other.
+    @Test func byLocationHandlesAntimeridianCrossingFromNegativeSide() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        // Query point at 179.9°W; photo at 179.9°E — about 22km apart going
+        // the short way across the date line.
+        try await store.upsert([PhotoAssetFixtures.makeAsset(id: "across-dateline-negative", latitude: 0, longitude: 179.9)])
+
+        let straightLineDistance = GeoMath.haversineDistanceKm(lat1: 0, lon1: -179.9, lat2: 0, lon2: 179.9)
+        #expect(straightLineDistance < 50) // sanity check: genuinely close via the short way around
+
+        let results = try await query.byLocation(latitude: 0, longitude: -179.9, radiusKm: 50)
+
+        #expect(results.map(\.id) == ["across-dateline-negative"])
+    }
+
+    // Near a pole, cos(latitude) collapses toward 0 (clamped at 0.01), so
+    // even a moderate radius blows the longitude box past a full 360° span.
+    // GeoMath.boundingBox special-cases that into a single all-longitudes
+    // range rather than a malformed [minLon, maxLon] pair — this branch is
+    // otherwise untested. A photo on the far side of the globe in longitude
+    // but still near the pole is genuinely close by great-circle distance,
+    // so it should be found.
+    @Test func byLocationNearPoleCoversFullLongitudeRange() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        try await store.upsert([PhotoAssetFixtures.makeAsset(id: "near-pole-far-side", latitude: 89.9, longitude: 170)])
+
+        let straightLineDistance = GeoMath.haversineDistanceKm(lat1: 89.9, lon1: 0, lat2: 89.9, lon2: 170)
+        #expect(straightLineDistance < 500) // sanity check: near-pole points are close regardless of longitude
+
+        let results = try await query.byLocation(latitude: 89.9, longitude: 0, radiusKm: 500)
+
+        #expect(results.map(\.id) == ["near-pole-far-side"])
+    }
 }

@@ -90,6 +90,25 @@ import Foundation
         #expect(Set(clusters.first?.assetIDs ?? []) == ["x1", "x2"])
     }
 
+    // Symmetric to gapExactlyEqualToMaxTravelGapDoesNotSplit: clusterTrips
+    // keeps a cluster when `span >= minStopDuration` (inclusive) — a span
+    // exactly equal to minStopDuration must survive rather than getting
+    // dropped as a "short stop." This is the boundary a `>` typo (instead
+    // of `>=`) would silently flip, and it's a different comparison in a
+    // different direction than the maxTravelGap boundary test above.
+    @Test func spanExactlyEqualToMinStopDurationIsKept() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        try await store.upsert([
+            PhotoAssetFixtures.makeAsset(id: "y1", capturedAt: Self.t(0)),
+            PhotoAssetFixtures.makeAsset(id: "y2", capturedAt: Self.t(Self.minStopDuration))
+        ])
+
+        let clusters = try await query.clusterTrips(minStopDuration: Self.minStopDuration, maxTravelGap: Self.maxTravelGap)
+
+        #expect(clusters.count == 1)
+        #expect(Set(clusters.first?.assetIDs ?? []) == ["y1", "y2"])
+    }
+
     // A plain arithmetic mean of +179.9 and -179.9 gives ~0 (Greenwich) —
     // circularMeanDegrees must place the centroid near ±180 (the dateline)
     // instead, since that's where the trip's photos actually are.

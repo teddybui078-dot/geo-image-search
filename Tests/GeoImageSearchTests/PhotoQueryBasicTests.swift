@@ -67,4 +67,15 @@ import Foundation
 
         #expect(results.count == 2)
     }
+
+    // nonFiniteDatesDoNotCrash above proves NaN/+infinity don't crash the
+    // process end-to-end through the DB, but never asserts the actual
+    // clamped value and never exercises -infinity at all (the Int64.min
+    // branch). unixSecondsClamped is a pure Date extension — assert all
+    // three clamp directions directly, no DB needed.
+    @Test func unixSecondsClampedHandlesEveryNonFiniteDirection() {
+        #expect(Date(timeIntervalSince1970: .nan).unixSecondsClamped == 0)
+        #expect(Date(timeIntervalSince1970: .infinity).unixSecondsClamped == .max)
+        #expect(Date(timeIntervalSince1970: -.infinity).unixSecondsClamped == .min)
+    }
 }
