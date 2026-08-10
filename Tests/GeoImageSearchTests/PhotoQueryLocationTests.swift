@@ -58,6 +58,20 @@ import Foundation
         #expect(results.isEmpty)
     }
 
+    // Pins existing behavior: a negative radiusKm inverts GeoMath.boundingBox's
+    // min/max (latDelta and lonDelta go negative), producing a box no real
+    // point satisfies. No explicit guard exists (unlike bySimilarity's
+    // limit), but this is safe by construction — worth a test documenting it
+    // rather than leaving it as an unverified assumption.
+    @Test func negativeRadiusReturnsEmptyRatherThanCrashing() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        try await store.upsert([PhotoAssetFixtures.makeAsset(id: "near", latitude: 10, longitude: 10)])
+
+        let results = try await query.byLocation(latitude: 10, longitude: 10, radiusKm: -50)
+
+        #expect(results.isEmpty)
+    }
+
     // radiusKm: 0 collapses both the R-Tree bbox and the haversine cutoff to
     // a single point — only an exact-coordinate match should survive.
     @Test func zeroRadiusOnlyMatchesExactCoordinates() async throws {

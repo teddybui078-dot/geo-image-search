@@ -4,12 +4,11 @@ struct SQLitePhotoQuery: PhotoQuery, Sendable {
     let connection: SQLiteConnection
     let embeddingDimension: Int
 
-    // Single source of truth for the photos row shape (must match
-    // PhotoAssetRowMapping.decode's column order). photoColumnsP is derived,
-    // not hand-duplicated, so the two can't drift out of sync.
-    private static let photoColumnNames = ["id", "latitude", "longitude", "captured_at", "created_at", "updated_at", "deleted_at", "place_name", "is_live_photo"]
-    private static let photoColumns = photoColumnNames.joined(separator: ", ")
-    private static let photoColumnsP = photoColumnNames.map { "p.\($0)" }.joined(separator: ", ")
+    // Derived from Schema.photoColumnNames (must match
+    // PhotoAssetRowMapping.decode's column order) rather than hand-
+    // duplicated — same source SQLitePhotoStore's INSERT column list uses.
+    private static let photoColumns = Schema.photoColumnNames.joined(separator: ", ")
+    private static let photoColumnsP = Schema.photoColumnNames.map { "p.\($0)" }.joined(separator: ", ")
 
     func allActivePhotosWithLocation() async throws -> [PhotoAsset] {
         try await connection.query(
@@ -95,19 +94,18 @@ struct SQLitePhotoQuery: PhotoQuery, Sendable {
         // Overfetch past the caller's limit before filtering deleted_at:
         // if we asked vec0 for exactly `limit` nearest neighbors and only
         // then filtered out soft-deleted rows, a deleted photo among the
-        // top-k would silently shrink the result below `limit`. The cap
-        // must never be smaller than `limit` itself — capping at a flat 200
-        // would truncate a caller-requested limit of, say, 300 down to 200
-        // even with zero soft-deleted rows in the way. Also clamped to 4096
-        // — sqlite-vec's own hard ceiling on a KNN query's k value (verified
-        // empirically: it throws a catchable error above that, not a crash,
-        // but there's no reason to ask for more than a personal library of
-        // ~50k photos could ever plausibly need this many of anyway).
-        // `limit * 4` traps on overflow for a huge `limit` (e.g. Int.max),
-        // so the multiply only happens once `overfetchCap` (computed without
-        // multiplying) is known to already be the smaller/safe operand.
-        let overfetchCap = min(max(limit, 200), 4096)
-        let overfetchK = limit >= 50 ? overfetchCap : min(limit * 4, overfetchCap)
+        // top-k would silently shrink the result below `limit`. 4x buffer,
+        // capped at 4096 — sqlite-vec's own hard ceiling on a KNN query's k
+        // value (verified empirically: it throws a catchable error above
+        // that, not a crash). A prior version of this formula capped at
+        // min(max(limit, 200), 4096), which collapsed to overfetchK == limit
+        // (zero deletion buffer) for any limit in [200, 4095] — silently
+        // contradicting this comment's own guarantee for exactly the range
+        // where a real personal-library query would plausibly land. `limit
+        // * 4` traps on overflow for a huge `limit` (e.g. Int.max), so the
+        // multiply is guarded behind a check that avoids it once `limit`
+        // alone already implies the 4096 cap applies.
+        let overfetchK = limit >= 1024 ? 4096 : min(limit * 4, 4096)
 
         return try await connection.query(
             """

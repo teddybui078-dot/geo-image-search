@@ -4,13 +4,18 @@ struct SQLitePhotoStore: PhotoStore, Sendable {
     let connection: SQLiteConnection
     let embeddingDimension: Int
 
+    // Derived from Schema.photoColumnNames rather than hand-duplicated —
+    // bind order below must match that array's order exactly.
+    private static let insertColumnList = Schema.photoColumnNames.joined(separator: ", ")
+    private static let insertPlaceholders = Array(repeating: "?", count: Schema.photoColumnNames.count).joined(separator: ",")
+
     func upsert(_ assets: [PhotoAsset]) async throws {
         try await connection.transaction { conn in
             for asset in assets {
                 try conn.run(
                     """
-                    INSERT INTO photos (id, latitude, longitude, captured_at, created_at, updated_at, deleted_at, place_name, is_live_photo)
-                    VALUES (?,?,?,?,?,?,?,?,?)
+                    INSERT INTO photos (\(Self.insertColumnList))
+                    VALUES (\(Self.insertPlaceholders))
                     ON CONFLICT(id) DO UPDATE SET
                         latitude = excluded.latitude,
                         longitude = excluded.longitude,

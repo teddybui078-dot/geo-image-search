@@ -51,6 +51,16 @@ enum Schema {
     )
     """
 
+    // Single source of truth for the photos row shape and column order —
+    // SQLitePhotoStore's INSERT and SQLitePhotoQuery's SELECT column lists
+    // both derive from this instead of hand-duplicating it (only
+    // photosTableSQL's CREATE TABLE above is still hand-written, since DDL
+    // needs full type/constraint info this plain name array can't carry).
+    static let photoColumnNames = [
+        "id", "latitude", "longitude", "captured_at",
+        "created_at", "updated_at", "deleted_at", "place_name", "is_live_photo"
+    ]
+
     // Additive/perf, not part of CONTRACT.md's literal DDL but harmless.
     static let indexCapturedAtSQL = "CREATE INDEX IF NOT EXISTS idx_photos_captured_at ON photos(captured_at)"
     static let indexDeletedAtSQL = "CREATE INDEX IF NOT EXISTS idx_photos_deleted_at ON photos(deleted_at)"

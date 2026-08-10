@@ -76,6 +76,18 @@ import Foundation
         #expect(try await rtreeRowCount(for: connection, assetID: "a") == 1)
     }
 
+    @Test func isLivePhotoTrueRoundTrips() async throws {
+        let (store, connection) = try await TestDatabase.makeStore()
+        try await store.upsert([PhotoAssetFixtures.makeAsset(id: "a", isLivePhoto: true)])
+
+        let isLivePhoto = try await connection.query(
+            "SELECT is_live_photo FROM photos WHERE id = ?",
+            bind: { try $0.bind("a", at: 1) },
+            map: { $0.columnBool(0) }
+        ).first
+        #expect(isLivePhoto == true)
+    }
+
     @Test func upsertEmptyArrayIsNoOp() async throws {
         let (store, connection) = try await TestDatabase.makeStore()
         try await store.upsert([])

@@ -65,6 +65,33 @@ import Foundation
         #expect(results.count == 205)
     }
 
+    // Regression test for a bug introduced while fixing the flat-200-cap
+    // truncation bug: for limit in [200, 4095], overfetchK collapsed to
+    // exactly `limit` (zero deletion buffer), silently contradicting the
+    // overfetch design's own purpose. Seeds 50 soft-deleted photos as the
+    // objectively nearest matches — with zero buffer, they'd occupy the
+    // entire overfetch window and leave the active results short of limit.
+    @Test func limitInZeroBufferRangeStillGetsFullBufferAgainstDeletedRows() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+
+        let deleted = (0..<50).map { PhotoAssetFixtures.makeAsset(id: "deleted\($0)") }
+        try await store.upsert(deleted)
+        for asset in deleted {
+            try await embed(store, id: asset.id, vector: [0, 0, 0, 0]) // distance 0 — objectively nearest
+        }
+        try await store.markDeleted(ids: deleted.map(\.id))
+
+        let active = (0..<200).map { PhotoAssetFixtures.makeAsset(id: "active\($0)") }
+        try await store.upsert(active)
+        for (index, asset) in active.enumerated() {
+            try await embed(store, id: asset.id, vector: [Float(index + 1), 0, 0, 0])
+        }
+
+        let results = try await query.bySimilarity(embedding: [0, 0, 0, 0], limit: 200)
+
+        #expect(results.count == 200)
+    }
+
     @Test func returnsResultsInDistanceOrder() async throws {
         let (store, query) = try await TestDatabase.makeStoreAndQuery()
         try await store.upsert([
