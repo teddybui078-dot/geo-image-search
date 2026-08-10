@@ -16,10 +16,13 @@ What actually needs to be built, organized by subsystem. Cross-references DESIGN
 - "Selected Photos" limited-access handling — currently deferred, flagged as a family-usability risk (see item 6 below)
 
 ### 2. Database Structure
-- SQLite schema for photo metadata, keyed by `PHAsset.localIdentifier`
-- SQLite **R-Tree** virtual table for geospatial (lat/lon/radius) range queries — distinct from sqlite-vec, easy to conflate the two
-- **sqlite-vec** table for embedding similarity (backs `semantic_search`)
-- Schema needs to carry: GPS presence/absence (no-GPS photos indexed but excluded from globe pins, not from date/semantic search), cached geocoded place name, soft-delete/updated timestamps
+**Done (`database-structure` branch):** `PhotoStore`/`PhotoQuery` are implemented against real SQLite, matching CONTRACT.md's schema section.
+- ~~SQLite schema for photo metadata, keyed by `PHAsset.localIdentifier`~~ **Done** — `photos` table keyed by `id` (TEXT), carries GPS presence/absence, cached place name, soft-delete/updated timestamps per CONTRACT.md.
+- ~~SQLite **R-Tree** virtual table for geospatial (lat/lon/radius) range queries — distinct from sqlite-vec, easy to conflate the two~~ **Done** — `photos_rtree`, kept in sync on upsert/GPS-clear via the documented rowid lookup (CONTRACT.md's rowid gotcha), read side backed by a bounding-box prefilter (`GeoMath.boundingBox`) plus an exact haversine cutoff.
+- ~~**sqlite-vec** table for embedding similarity (backs `semantic_search`)~~ **Done** — `photo_embeddings` (vec0), dimension parameterized at schema-creation time rather than hardcoded (see item 5 below), plus an additive `photo_embedding_meta` companion table for `EmbeddingRecord.modelVersion`/`.generatedAt` (no column for those in CONTRACT's literal 2-column DDL).
+- ~~Schema needs to carry: GPS presence/absence (no-GPS photos indexed but excluded from globe pins, not from date/semantic search), cached geocoded place name, soft-delete/updated timestamps~~ **Done**, see above.
+
+Apple's system `libsqlite3` disables `sqlite3_auto_extension`, so the standard sqlite-vec integration pattern doesn't work — SQLite and sqlite-vec are vendored as SPM C targets (`Sources/CSQLite3`, `Sources/CSQLiteVec`) built `SQLITE_CORE`-mode instead. 62 Swift Testing tests cover schema creation, R-Tree sync, the two-phase geo query, KNN similarity (including the sqlite-vec 4096 k-ceiling and soft-delete overfetch buffer), and trip clustering, all against in-memory/temp-file DBs seeded with fixture data (no real Photos data exists yet).
 
 ### 3. 3D Interactive Map
 - ~~Globe library decision~~ **Resolved: OpenGlobus** — Apache-2.0, no ion account/token friction, lighter in the WKWebView, better fit for hand-coding a custom look. Tradeoff accepted: thinner docs, no built-in time-dynamic visualization for a future trip-recap/timeline feature.
@@ -111,17 +114,19 @@ Surfaced during `/plan-eng-review` (2026-08-09), sourced from the Codex outside-
 
 ## 5. CoreML embedding model selection
 
-**What:** Pick the specific MobileCLIP variant (embedding dimension, tokenizer/text-tower availability, license) before the sqlite-vec schema is finalized — the vector column width depends on this choice.
+**What:** Pick the specific MobileCLIP variant (embedding dimension, tokenizer/text-tower availability, license).
 
-**Why:** Not a detail — picking it after the schema exists means a migration.
+**Why:** Not a detail — the choice determines the embedding dimension `photo_embeddings` is created with.
+
+**No longer schema-blocking:** the `database-structure` branch parameterized the sqlite-vec schema on `embeddingDimension` at creation time (`Schema.photoEmbeddingsSQL(dimension:)`) rather than hardcoding CONTRACT.md's `FLOAT[512]` placeholder, specifically so this choice wouldn't require a migration later. Picking the model is still a prerequisite for the embedding-pipeline worktree itself (and for `upsertEmbedding`'s dimension validation to mean anything against a real model), just no longer a hard blocker on the database schema landing.
 
 **Pros:** Avoids a schema migration later; picking early means the sqlite-vec table is right the first time.
 
 **Cons:** Requires research into MobileCLIP variants (and any licensing terms) before Next Step 4 can fully start.
 
-**Context:** Next Step 4 prerequisite — research and pick the specific model variant before writing the sqlite-vec schema, not after.
+**Context:** Next Step 4 prerequisite — research and pick the specific model variant before the embedding pipeline starts writing real vectors.
 
-**Depends on / blocked by:** None — can be researched independently, but must land before Next Step 4's schema work.
+**Depends on / blocked by:** None — can be researched independently.
 
 ## 6. Real GPS coverage + limited-access risk
 

@@ -132,7 +132,7 @@ Full app-bundle build (Photos entitlements, sandboxing, code signing) requires o
 
 ### Module layout
 
-`Sources/GeoImageSearch/` — `App/` (SwiftUI entry point), `Ingestion/` (PhotosKit permission, asset identity, sync strategy), `Storage/` (SQLite schema), `Globe/` (WKWebView bridge, pin clustering), `Query/` (shared `PhotoQuery` repository backing all agent tools), `Agent/` (tool schemas), `Embeddings/` (background embedding generation), `Common/` (shared error reporting + per-boundary retry policies).
+`Sources/GeoImageSearch/` — `Core/` (shared domain types: `PhotoAsset`, `EmbeddingRecord`, `TripCluster`), `App/` (SwiftUI entry point), `Ingestion/` (PhotosKit permission, asset identity, sync strategy), `Storage/` (SQLite schema), `Globe/` (WKWebView bridge, pin clustering), `Query/` (shared `PhotoQuery` repository backing all agent tools), `Agent/` (tool schemas), `Embeddings/` (background embedding generation), `Common/` (shared error reporting + per-boundary retry policies).
 
 ### Testing
 
