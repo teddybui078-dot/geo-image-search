@@ -19,13 +19,28 @@ enum GeoMath {
 
     static func boundingBox(latitude: Double, longitude: Double, radiusKm: Double) -> BoundingBox {
         let latDelta = radiusKm / kmPerDegreeLatitude
-        // Guarded away from zero so near-pole photos don't blow lonDelta up
-        // to infinity; a large-but-finite delta there is still correct
-        // (near the poles, all longitudes are close together).
-        let lonScale = max(cos(latitude * .pi / 180), 0.01)
-        let lonDelta = radiusKm / (kmPerDegreeLatitude * lonScale)
         let minLat = latitude - latDelta
         let maxLat = latitude + latDelta
+
+        // If the search radius reaches as far as (or past) the nearest pole,
+        // every longitude can contain a point within radiusKm — the search
+        // circle goes "over the top" and back down the other side, where
+        // longitude is meaningless. No finite longitude window is correct
+        // here regardless of how wide; verified against a concrete case: a
+        // point 16.7km from a query 0.11km from the pole, at a longitude
+        // 135° away, was silently excluded by the lonScale-clamped formula
+        // below before this check existed (the clamp only prevents
+        // infinity/NaN, it doesn't make the box geometrically correct).
+        let poleDistanceKm = (90 - abs(latitude)) * kmPerDegreeLatitude
+        if radiusKm >= poleDistanceKm {
+            return BoundingBox(minLat: minLat, maxLat: maxLat, lonRanges: [(-180, 180)])
+        }
+
+        // Guarded away from zero so near-pole photos don't blow lonDelta up
+        // to infinity/NaN — correctness for the actual near-pole case is
+        // handled by the poleDistanceKm check above, not by this clamp.
+        let lonScale = max(cos(latitude * .pi / 180), 0.01)
+        let lonDelta = radiusKm / (kmPerDegreeLatitude * lonScale)
         let rawMinLon = longitude - lonDelta
         let rawMaxLon = longitude + lonDelta
 

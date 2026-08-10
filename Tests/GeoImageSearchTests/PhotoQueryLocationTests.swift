@@ -160,4 +160,31 @@ import Foundation
 
         #expect(results.map(\.id) == ["near-pole-far-side"])
     }
+
+    // Regression test: GeoMath.boundingBox's lonScale clamp only prevents
+    // lonDelta from overflowing to infinity/NaN — it doesn't make the
+    // resulting box geometrically correct. Whenever the search radius
+    // reaches as far as the pole itself, a finite-width longitude box is
+    // simply the wrong shape (longitude is meaningless exactly at the
+    // pole), no matter how wide. This case is different from
+    // byLocationNearPoleCoversFullLongitudeRange above: 500km there was
+    // large enough to organically blow the raw longitude span past 360°
+    // and hit the existing full-range fallback; here, radiusKm: 50 stays
+    // well under that organic threshold, so a bug in *this* case wasn't
+    // caught by that test — it needs the radius-reaches-the-pole check.
+    @Test func byLocationHandlesModerateRadiusReachingOverThePole() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        // Query 0.11km from the pole; photo 0.15km from the pole at a
+        // longitude 135° away — genuinely ~16.7km apart by haversine
+        // (verified by hand), well inside a 50km radius, but a naive
+        // lonScale-clamped box of ±44.9° around longitude 0 excludes 135°.
+        try await store.upsert([PhotoAssetFixtures.makeAsset(id: "near-pole-across", latitude: 89.85, longitude: 135)])
+
+        let straightLineDistance = GeoMath.haversineDistanceKm(lat1: 89.999, lon1: 0, lat2: 89.85, lon2: 135)
+        #expect(straightLineDistance < 50) // sanity check on the fixture itself
+
+        let results = try await query.byLocation(latitude: 89.999, longitude: 0, radiusKm: 50)
+
+        #expect(results.map(\.id) == ["near-pole-across"])
+    }
 }

@@ -105,6 +105,18 @@ struct SQLitePhotoQuery: PhotoQuery, Sendable {
         // * 4` traps on overflow for a huge `limit` (e.g. Int.max), so the
         // multiply is guarded behind a check that avoids it once `limit`
         // alone already implies the 4096 cap applies.
+        //
+        // Known limitation, not fixable within this design: once `limit`
+        // itself reaches 4096 — sqlite-vec's own hard k-ceiling — there is
+        // no room left to overfetch at all (overfetchK == limit, zero
+        // deletion buffer), and for `limit` beyond 4096 the result is
+        // structurally capped at 4096 regardless of how many active matches
+        // actually exist, the same way a plain SQL LIMIT larger than the
+        // table's row count just returns fewer rows without erroring. Not
+        // worth guarding against explicitly: a personal library's agent
+        // tool calls this with limit defaulting to 20 (CONTRACT.md's
+        // semantic_search draft schema) — asking for 4096+ nearest matches
+        // is already far outside any real usage this app has.
         let overfetchK = limit >= 1024 ? 4096 : min(limit * 4, 4096)
 
         return try await connection.query(
