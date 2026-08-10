@@ -1,14 +1,40 @@
-# Error Handling
+# Geo Image Search
 
-The shared error surface every other feature imports — `AppError`, `RetryPolicy`, `ErrorReporting`.
+A personal geographic memory engine for macOS. Grants real Photos/iCloud permission (no upload, no folder picker), plots your photos on a hand-styled interactive 3D globe, and answers natural-language questions about where you've been through an AI agent — "where did I go in Europe?", "find pictures from my trip to Greece."
 
-**Status: done.** `AppError`/`RetryPolicy`/`ErrorReporting` are implemented in `Sources/GeoImageSearch/Common/`, matching CONTRACT.md's locked shapes, with Swift Testing coverage.
+Personal project, solo builder, likely open-sourced once it's further along.
 
-## What this covers
+## Status
 
-- `AppError`: one enum covering every failure mode across PhotosKit/iCloud, CLGeocoder, and the OpenAI API, plus `severity`/`logDescription` so every call site formats an error the same way
-- `ErrorReporting`: one consistent reporting/logging surface (`ErrorReporter`, backed by `os.Logger` through an injectable `ErrorLogSink`), so errors show up the same way in the UI regardless of where they came from
-- `RetryPolicy`: a separate implementation per boundary (`PhotosRetryPolicy`, `GeocodingRetryPolicy`, `LLMRetryPolicy`), since each fails differently — this was a deliberate refinement made during `/plan-eng-review` after an outside-voice review argued a single unified retry abstraction would hide real failure-mode differences; see [DESIGN.md](DESIGN.md)'s Architecture Decisions
-- `RetryExecutor`: a shared retry loop (injectable delay) so each boundary runs its policy without hand-rolling its own attempt-counting/backoff logic
+Early development, being built across parallel feature branches.
 
-Every other feature branch is currently using a local placeholder error type until this merges — swap it for the real `AppError`/`RetryPolicy`/`ErrorReporting` in `Sources/GeoImageSearch/Common/` once this lands. See [CONTRACT.md](CONTRACT.md)'s Error handling section for the locked shape.
+| Feature | Branch | Status |
+|---|---|---|
+| Database Structure | `database-structure` | ✅ Merged |
+| Photo/iCloud Extraction | `photo-icloud-extraction` | In progress |
+| 3D Interactive Map | `add-3dmap` | In progress |
+| Q&A AI Agent | `q-and-a-ai-agent` | In progress |
+| Embedding Pipeline | `embedding-pipeline` | In progress |
+| Error Handling | `error-handling` | In progress |
+
+## Architecture
+
+Native Swift app. PhotosKit for real Photos/iCloud access, SQLite (with an R-Tree geospatial index and sqlite-vec for semantic search) for storage, an [OpenGlobus](https://github.com/openglobus/openglobus) globe rendered in an embedded `WKWebView`, and an OpenAI tool-calling agent that queries the indexed library and drives the globe.
+
+- [DESIGN.md](DESIGN.md) — full design history: the problem, the alternatives considered, the architecture decisions, and why each one was made
+- [CONTRACT.md](CONTRACT.md) — the locked interfaces (shared types, database schema, protocols) every feature branch builds against, so they can be developed in parallel worktrees without blocking on each other
+- [TODOS.md](TODOS.md) — the build breakdown by subsystem, plus deferred/lower-priority items
+
+## Build
+
+```bash
+swift build      # build the package
+swift run        # run the app
+swift test       # run the test suite
+```
+
+Full build commands, module layout, and the parallel-worktree workflow: [CLAUDE.md](CLAUDE.md)
+
+## License
+
+See [LICENSE](LICENSE).
