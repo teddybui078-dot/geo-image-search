@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 @testable import GeoImageSearch
 
 @Suite struct SQLiteConnectionTests {
@@ -58,5 +59,44 @@ import Testing
 
         let rows = try await connection.query("SELECT vec FROM t", map: { $0.columnBlobAsFloats(0) })
         #expect(rows == [vector])
+    }
+
+    @Test func openThrowsForUnwritablePath() throws {
+        #expect(throws: SQLiteError.self) {
+            _ = try SQLiteConnection(path: "/nonexistent-dir-\(UUID().uuidString)/db.sqlite3")
+        }
+    }
+
+    @Test func executeThrowsOnMalformedSQL() async throws {
+        let connection = try SQLiteConnection(path: ":memory:")
+        await #expect(throws: SQLiteError.self) {
+            try await connection.execute("NOT VALID SQL")
+        }
+    }
+
+    @Test func runThrowsOnPrepareFailure() async throws {
+        let connection = try SQLiteConnection(path: ":memory:")
+        await #expect(throws: SQLiteError.self) {
+            try await connection.run("INSERT INTO nonexistent_table (x) VALUES (?)", bind: { try $0.bind("x", at: 1) })
+        }
+    }
+
+    // Actor isolation should serialize concurrent writers — this stress
+    // test drives real concurrent tasks at the same connection rather than
+    // relying solely on reading the isolation code.
+    @Test func concurrentWritesDoNotRaceOrLoseRows() async throws {
+        let connection = try SQLiteConnection(path: ":memory:")
+        try await connection.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+
+        await withTaskGroup(of: Void.self) { group in
+            for i in 0..<50 {
+                group.addTask {
+                    _ = try? await connection.run("INSERT INTO t (name) VALUES (?)", bind: { try $0.bind("row-\(i)", at: 1) })
+                }
+            }
+        }
+
+        let count = try await connection.query("SELECT COUNT(*) FROM t", map: { $0.columnInt64(0) })
+        #expect(count == [50])
     }
 }

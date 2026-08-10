@@ -3,10 +3,6 @@ import Foundation
 @testable import GeoImageSearch
 
 @Suite struct PhotoQueryClusterTripsTests {
-    private func makeStoreAndQuery() async throws -> (store: SQLitePhotoStore, query: SQLitePhotoQuery) {
-        try await SQLiteDatabase.openInMemory(embeddingDimension: 4)
-    }
-
     private static let base: TimeInterval = 1_700_000_000
     private static let minStopDuration: TimeInterval = 1800 // 30 min
     private static let maxTravelGap: TimeInterval = 7200 // 2 hours
@@ -16,7 +12,7 @@ import Foundation
     }
 
     @Test func splitsIntoClustersDropsShortStopsAndExcludesNoGPS() async throws {
-        let (store, query) = try await makeStoreAndQuery()
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
 
         // Cluster A: 3 photos within a 1-hour span at (10,10). Gap to next
         // segment exceeds maxTravelGap, so it becomes its own cluster.
@@ -58,7 +54,9 @@ import Foundation
         let clusterA = try #require(clusters.first { $0.assetIDs.contains("a1") })
         #expect(Set(clusterA.assetIDs) == ["a1", "a2", "a3"])
         #expect(clusterA.centroidLatitude == 10)
-        #expect(clusterA.centroidLongitude == 10)
+        // Circular mean round-trips through sin/cos/atan2, so it isn't
+        // bit-exact for a value like 10 the way a plain arithmetic mean is.
+        #expect(abs(clusterA.centroidLongitude - 10) < 1e-9)
         #expect(clusterA.placeName == "CityA")
         #expect(clusterA.startDate == Self.t(0))
         #expect(clusterA.endDate == Self.t(3600))
@@ -66,13 +64,45 @@ import Foundation
         let clusterB = try #require(clusters.first { $0.assetIDs.contains("b1") })
         #expect(Set(clusterB.assetIDs) == ["b1", "b2", "b3"])
         #expect(clusterB.centroidLatitude == 20)
-        #expect(clusterB.centroidLongitude == 20)
+        #expect(abs(clusterB.centroidLongitude - 20) < 1e-9)
         #expect(clusterB.placeName == "CityB")
     }
 
     @Test func noPhotosProducesNoClusters() async throws {
-        let (_, query) = try await makeStoreAndQuery()
+        let (_, query) = try await TestDatabase.makeStoreAndQuery()
         let clusters = try await query.clusterTrips(minStopDuration: Self.minStopDuration, maxTravelGap: Self.maxTravelGap)
         #expect(clusters.isEmpty)
+    }
+
+    // clusterTrips splits on `gap > maxTravelGap` (strict), so a gap exactly
+    // equal to maxTravelGap must NOT split — this is the boundary a `>=`
+    // typo would silently get wrong.
+    @Test func gapExactlyEqualToMaxTravelGapDoesNotSplit() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        try await store.upsert([
+            PhotoAssetFixtures.makeAsset(id: "x1", capturedAt: Self.t(0)),
+            PhotoAssetFixtures.makeAsset(id: "x2", capturedAt: Self.t(Self.maxTravelGap))
+        ])
+
+        let clusters = try await query.clusterTrips(minStopDuration: Self.minStopDuration, maxTravelGap: Self.maxTravelGap)
+
+        #expect(clusters.count == 1)
+        #expect(Set(clusters.first?.assetIDs ?? []) == ["x1", "x2"])
+    }
+
+    // A plain arithmetic mean of +179.9 and -179.9 gives ~0 (Greenwich) —
+    // circularMeanDegrees must place the centroid near ±180 (the dateline)
+    // instead, since that's where the trip's photos actually are.
+    @Test func centroidHandlesAntimeridianCrossingTrip() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        try await store.upsert([
+            PhotoAssetFixtures.makeAsset(id: "d1", latitude: 0, longitude: 179.9, capturedAt: Self.t(0)),
+            PhotoAssetFixtures.makeAsset(id: "d2", latitude: 0, longitude: -179.9, capturedAt: Self.t(1800))
+        ])
+
+        let clusters = try await query.clusterTrips(minStopDuration: Self.minStopDuration, maxTravelGap: Self.maxTravelGap)
+
+        let cluster = try #require(clusters.first)
+        #expect(abs(cluster.centroidLongitude) > 170) // near ±180, not ~0
     }
 }

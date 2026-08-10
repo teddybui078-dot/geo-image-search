@@ -34,7 +34,11 @@ actor SQLiteConnection {
         if initResult != SQLITE_OK {
             let message = errorPointer.map { String(cString: $0) } ?? "unknown"
             sqlite3_free(errorPointer)
-            sqlite3_close_v2(handle)
+            // Don't close here: self.db is already assigned above, so once
+            // this initializer throws, deinit runs and closes it — an
+            // explicit close here would be a double-close/use-after-free
+            // (verified: Swift runs deinit on a throwing init once all
+            // stored properties are set).
             throw SQLiteError.extensionInitFailed(message)
         }
     }

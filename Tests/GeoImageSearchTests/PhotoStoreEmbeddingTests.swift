@@ -3,13 +3,8 @@ import Foundation
 @testable import GeoImageSearch
 
 @Suite struct PhotoStoreEmbeddingTests {
-    private func makeStore() async throws -> (store: SQLitePhotoStore, connection: SQLiteConnection) {
-        let (store, _) = try await SQLiteDatabase.openInMemory(embeddingDimension: 4)
-        return (store, store.connection)
-    }
-
     @Test func correctDimensionVectorSucceeds() async throws {
-        let (store, _) = try await makeStore()
+        let (store, _) = try await TestDatabase.makeStore()
         try await store.upsert([PhotoAssetFixtures.makeAsset(id: "a")])
 
         try await store.upsertEmbedding(EmbeddingRecord(
@@ -21,7 +16,7 @@ import Foundation
     }
 
     @Test func wrongDimensionVectorThrows() async throws {
-        let (store, _) = try await makeStore()
+        let (store, _) = try await TestDatabase.makeStore()
         try await store.upsert([PhotoAssetFixtures.makeAsset(id: "a")])
 
         await #expect(throws: SQLiteError.self) {
@@ -35,7 +30,7 @@ import Foundation
     }
 
     @Test func reupsertingSameAssetIDReplacesRatherThanDuplicates() async throws {
-        let (store, connection) = try await makeStore()
+        let (store, connection) = try await TestDatabase.makeStore()
         try await store.upsert([PhotoAssetFixtures.makeAsset(id: "a")])
 
         try await store.upsertEmbedding(EmbeddingRecord(

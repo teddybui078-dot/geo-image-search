@@ -24,10 +24,10 @@ struct SQLitePhotoStore: PhotoStore, Sendable {
                         try stmt.bind(asset.id, at: 1)
                         try stmt.bind(asset.latitude, at: 2)
                         try stmt.bind(asset.longitude, at: 3)
-                        try stmt.bind(Int64(asset.capturedAt.timeIntervalSince1970), at: 4)
-                        try stmt.bind(Int64(asset.createdAt.timeIntervalSince1970), at: 5)
-                        try stmt.bind(Int64(asset.updatedAt.timeIntervalSince1970), at: 6)
-                        try stmt.bind(asset.deletedAt.map { Int64($0.timeIntervalSince1970) }, at: 7)
+                        try stmt.bind(asset.capturedAt.unixSecondsClamped, at: 4)
+                        try stmt.bind(asset.createdAt.unixSecondsClamped, at: 5)
+                        try stmt.bind(asset.updatedAt.unixSecondsClamped, at: 6)
+                        try stmt.bind(asset.deletedAt.map(\.unixSecondsClamped), at: 7)
                         try stmt.bind(asset.placeName, at: 8)
                         try stmt.bind(asset.isLivePhoto, at: 9)
                     }
@@ -114,7 +114,7 @@ struct SQLitePhotoStore: PhotoStore, Sendable {
                 bind: { stmt in
                     try stmt.bind(record.assetID, at: 1)
                     try stmt.bind(record.modelVersion, at: 2)
-                    try stmt.bind(Int64(record.generatedAt.timeIntervalSince1970), at: 3)
+                    try stmt.bind(record.generatedAt.unixSecondsClamped, at: 3)
                 }
             )
         }

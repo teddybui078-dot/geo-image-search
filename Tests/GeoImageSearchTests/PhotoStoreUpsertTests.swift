@@ -3,11 +3,6 @@ import Foundation
 @testable import GeoImageSearch
 
 @Suite struct PhotoStoreUpsertTests {
-    private func makeStore() async throws -> (store: SQLitePhotoStore, connection: SQLiteConnection) {
-        let (store, _) = try await SQLiteDatabase.openInMemory(embeddingDimension: 4)
-        return (store, store.connection)
-    }
-
     private func rtreeRowCount(for connection: SQLiteConnection, assetID: String) async throws -> Int {
         try await connection.query(
             "SELECT COUNT(*) FROM photos_rtree r JOIN photos p ON p.rowid = r.id WHERE p.id = ?",
@@ -17,7 +12,7 @@ import Foundation
     }
 
     @Test func newAssetWithGPSGetsRTreeRow() async throws {
-        let (store, connection) = try await makeStore()
+        let (store, connection) = try await TestDatabase.makeStore()
         try await store.upsert([PhotoAssetFixtures.makeAsset(id: "a", latitude: 10, longitude: 20)])
 
         #expect(try await rtreeRowCount(for: connection, assetID: "a") == 1)
@@ -33,14 +28,14 @@ import Foundation
     }
 
     @Test func newAssetWithoutGPSGetsNoRTreeRow() async throws {
-        let (store, connection) = try await makeStore()
+        let (store, connection) = try await TestDatabase.makeStore()
         try await store.upsert([PhotoAssetFixtures.makeAsset(id: "a", latitude: nil, longitude: nil)])
 
         #expect(try await rtreeRowCount(for: connection, assetID: "a") == 0)
     }
 
     @Test func reupsertingSameIDUpdatesPhotoAndReplacesRTreeRow() async throws {
-        let (store, connection) = try await makeStore()
+        let (store, connection) = try await TestDatabase.makeStore()
         try await store.upsert([PhotoAssetFixtures.makeAsset(id: "a", latitude: 10, longitude: 20)])
         try await store.upsert([PhotoAssetFixtures.makeAsset(id: "a", latitude: 30, longitude: 40)])
 
@@ -58,7 +53,7 @@ import Foundation
     }
 
     @Test func clearingGPSOnLaterUpsertRemovesRTreeRow() async throws {
-        let (store, connection) = try await makeStore()
+        let (store, connection) = try await TestDatabase.makeStore()
         try await store.upsert([PhotoAssetFixtures.makeAsset(id: "a", latitude: 10, longitude: 20)])
         #expect(try await rtreeRowCount(for: connection, assetID: "a") == 1)
 
@@ -67,7 +62,7 @@ import Foundation
     }
 
     @Test func markDeletedSetsDeletedAtButKeepsRTreeRow() async throws {
-        let (store, connection) = try await makeStore()
+        let (store, connection) = try await TestDatabase.makeStore()
         try await store.upsert([PhotoAssetFixtures.makeAsset(id: "a", latitude: 10, longitude: 20)])
 
         try await store.markDeleted(ids: ["a"])
@@ -79,5 +74,27 @@ import Foundation
         ).first ?? nil
         #expect(deletedAt != nil)
         #expect(try await rtreeRowCount(for: connection, assetID: "a") == 1)
+    }
+
+    @Test func upsertEmptyArrayIsNoOp() async throws {
+        let (store, connection) = try await TestDatabase.makeStore()
+        try await store.upsert([])
+
+        let count = try await connection.query("SELECT COUNT(*) FROM photos", map: { $0.columnInt64(0) }).first
+        #expect(count == 0)
+    }
+
+    @Test func markDeletedEmptyIDsIsNoOp() async throws {
+        let (store, connection) = try await TestDatabase.makeStore()
+        try await store.upsert([PhotoAssetFixtures.makeAsset(id: "a")])
+
+        try await store.markDeleted(ids: [])
+
+        let deletedAt = try await connection.query(
+            "SELECT deleted_at FROM photos WHERE id = ?",
+            bind: { try $0.bind("a", at: 1) },
+            map: { $0.columnOptionalInt64(0) }
+        ).first ?? nil
+        #expect(deletedAt == nil)
     }
 }

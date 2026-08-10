@@ -3,10 +3,6 @@ import Foundation
 @testable import GeoImageSearch
 
 @Suite struct PhotoQuerySimilarityTests {
-    private func makeStoreAndQuery() async throws -> (store: SQLitePhotoStore, query: SQLitePhotoQuery) {
-        try await SQLiteDatabase.openInMemory(embeddingDimension: 4)
-    }
-
     private func embed(_ store: SQLitePhotoStore, id: String, vector: [Float]) async throws {
         try await store.upsertEmbedding(EmbeddingRecord(
             assetID: id, vector: vector, modelVersion: "test-v1",
@@ -15,14 +11,62 @@ import Foundation
     }
 
     @Test func wrongDimensionQueryThrows() async throws {
-        let (_, query) = try await makeStoreAndQuery()
+        let (_, query) = try await TestDatabase.makeStoreAndQuery()
         await #expect(throws: SQLiteError.self) {
             _ = try await query.bySimilarity(embedding: [1, 2, 3], limit: 5)
         }
     }
 
+    // SQLite treats a negative LIMIT as "unlimited" — without a guard, a
+    // non-positive `limit` would silently return every active embedded
+    // photo instead of an empty result.
+    @Test func nonPositiveLimitReturnsEmptyRatherThanUnbounded() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        try await store.upsert([
+            PhotoAssetFixtures.makeAsset(id: "a"),
+            PhotoAssetFixtures.makeAsset(id: "b")
+        ])
+        try await embed(store, id: "a", vector: [1, 0, 0, 0])
+        try await embed(store, id: "b", vector: [2, 0, 0, 0])
+
+        let zeroResults = try await query.bySimilarity(embedding: [1, 0, 0, 0], limit: 0)
+        let negativeResults = try await query.bySimilarity(embedding: [1, 0, 0, 0], limit: -1)
+
+        #expect(zeroResults.isEmpty)
+        #expect(negativeResults.isEmpty)
+    }
+
+    // `limit * 4` traps on integer overflow for a large enough `limit`
+    // (Swift's default Int arithmetic crashes the process on overflow) —
+    // this must not crash, and should behave like any other large limit.
+    @Test func veryLargeLimitDoesNotCrash() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        try await store.upsert([PhotoAssetFixtures.makeAsset(id: "a")])
+        try await embed(store, id: "a", vector: [1, 0, 0, 0])
+
+        let results = try await query.bySimilarity(embedding: [1, 0, 0, 0], limit: Int.max)
+
+        #expect(results.map(\.id) == ["a"])
+    }
+
+    // The overfetch window must never be smaller than the caller's own
+    // limit — a flat 200-row cap would truncate a request for 250 active
+    // matches down to 200 even with zero soft-deleted rows in the way.
+    @Test func limitAbove200IsNotTruncatedByOverfetchCap() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        let assets = (0..<205).map { PhotoAssetFixtures.makeAsset(id: "p\($0)") }
+        try await store.upsert(assets)
+        for (index, asset) in assets.enumerated() {
+            try await embed(store, id: asset.id, vector: [Float(index), 0, 0, 0])
+        }
+
+        let results = try await query.bySimilarity(embedding: [0, 0, 0, 0], limit: 205)
+
+        #expect(results.count == 205)
+    }
+
     @Test func returnsResultsInDistanceOrder() async throws {
-        let (store, query) = try await makeStoreAndQuery()
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
         try await store.upsert([
             PhotoAssetFixtures.makeAsset(id: "closest"),
             PhotoAssetFixtures.makeAsset(id: "mid"),
@@ -38,7 +82,7 @@ import Foundation
     }
 
     @Test func limitTruncatesResults() async throws {
-        let (store, query) = try await makeStoreAndQuery()
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
         try await store.upsert([
             PhotoAssetFixtures.makeAsset(id: "closest"),
             PhotoAssetFixtures.makeAsset(id: "mid"),
@@ -57,7 +101,7 @@ import Foundation
     // match is soft-deleted, so the next-best active match should surface
     // in its place rather than the result silently shrinking below limit.
     @Test func softDeletedNearestMatchIsExcludedAndNextBestSurfaces() async throws {
-        let (store, query) = try await makeStoreAndQuery()
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
         try await store.upsert([
             PhotoAssetFixtures.makeAsset(id: "closest-but-deleted"),
             PhotoAssetFixtures.makeAsset(id: "next-best")

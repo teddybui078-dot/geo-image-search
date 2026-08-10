@@ -3,12 +3,8 @@ import Foundation
 @testable import GeoImageSearch
 
 @Suite struct PhotoQueryBasicTests {
-    private func makeStoreAndQuery() async throws -> (store: SQLitePhotoStore, query: SQLitePhotoQuery) {
-        try await SQLiteDatabase.openInMemory(embeddingDimension: 4)
-    }
-
     @Test func byDateRangeIncludesNoGPSPhotos() async throws {
-        let (store, query) = try await makeStoreAndQuery()
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
         let inRange = Date(timeIntervalSince1970: 1_700_000_500)
         try await store.upsert([
             PhotoAssetFixtures.makeAsset(id: "no-gps", latitude: nil, longitude: nil, capturedAt: inRange)
@@ -23,7 +19,7 @@ import Foundation
     }
 
     @Test func byDateRangeExcludesOutOfRangeAndDeleted() async throws {
-        let (store, query) = try await makeStoreAndQuery()
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
         try await store.upsert([
             PhotoAssetFixtures.makeAsset(id: "before", capturedAt: Date(timeIntervalSince1970: 1_699_000_000)),
             PhotoAssetFixtures.makeAsset(id: "in-range", capturedAt: Date(timeIntervalSince1970: 1_700_000_500)),
@@ -41,7 +37,7 @@ import Foundation
     }
 
     @Test func allActivePhotosWithLocationExcludesNoGPSAndDeleted() async throws {
-        let (store, query) = try await makeStoreAndQuery()
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
         try await store.upsert([
             PhotoAssetFixtures.makeAsset(id: "with-gps"),
             PhotoAssetFixtures.makeAsset(id: "no-gps", latitude: nil, longitude: nil),
@@ -52,5 +48,23 @@ import Foundation
         let results = try await query.allActivePhotosWithLocation()
 
         #expect(results.map(\.id) == ["with-gps"])
+    }
+
+    // Int64(Double) traps on NaN or out-of-Int64-range values — a malformed
+    // capturedAt (corrupted upstream metadata, not just contrived input)
+    // must not crash the process on write or read.
+    @Test func nonFiniteDatesDoNotCrash() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        try await store.upsert([
+            PhotoAssetFixtures.makeAsset(id: "nan-date", capturedAt: Date(timeIntervalSince1970: .nan)),
+            PhotoAssetFixtures.makeAsset(id: "infinite-date", capturedAt: Date(timeIntervalSince1970: .infinity))
+        ])
+
+        let results = try await query.byDateRange(
+            start: Date(timeIntervalSince1970: -1e30),
+            end: Date(timeIntervalSince1970: 1e30)
+        )
+
+        #expect(results.count == 2)
     }
 }
