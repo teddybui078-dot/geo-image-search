@@ -1,9 +1,9 @@
 import Foundation
 
 // CONTRACT.md — locked read interface. Implemented by database-structure
-// (SQLitePhotoQuery); called by q-and-a-ai-agent and 3d-interactive-map.
+// (SQLitePhotoQuery); called by q-and-a-ai-agent and add-3dmap.
 //
-// 3d-interactive-map only needs allActivePhotosWithLocation() to build the
+// add-3dmap only needs allActivePhotosWithLocation() to build the
 // initial globe view — it does not need the other four methods.
 protocol PhotoQuery {
     func byLocation(latitude: Double, longitude: Double, radiusKm: Double) async throws -> [PhotoAsset]

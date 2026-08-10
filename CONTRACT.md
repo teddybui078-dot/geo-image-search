@@ -6,14 +6,16 @@ If you're an agent starting work in a worktree: **read this file before writing 
 
 Feature areas map 1:1 to `TODOS.md`'s Build Breakdown and to suggested branch names:
 
-| Feature area | Branch name | Owns |
-|---|---|---|
-| Photo/iCloud Extraction | `photo-icloud-extraction` | Produces `PhotoAsset` records, writes through `PhotoStore` |
-| Database Structure | `database-structure` | Implements `PhotoStore` and `PhotoQuery`, owns the SQL schema |
-| 3D Interactive Map | `add-3dmap` | The `WebViewBridge` message protocol, globe rendering |
-| Q&A AI Agent | `q-and-a-ai-agent` | Agent tool schemas, calls `PhotoQuery` |
-| Embedding Pipeline | `embedding-pipeline` | Produces `EmbeddingRecord`, writes through `PhotoStore` |
-| Error Handling | `error-handling` | `AppError`, `RetryPolicy`, `ErrorReporting` — everyone else imports this |
+| Feature area | Branch name | Status | Owns |
+|---|---|---|---|
+| Photo/iCloud Extraction | `photo-icloud-extraction` | Not started | Produces `PhotoAsset` records, writes through `PhotoStore` |
+| Database Structure | `database-structure` | **✅ Merged (PR #1)** | Implements `PhotoStore` and `PhotoQuery`, owns the SQL schema |
+| 3D Interactive Map | `add-3dmap` | Not started | The `WebViewBridge` message protocol, globe rendering |
+| Q&A AI Agent | `q-and-a-ai-agent` | Not started | Agent tool schemas, calls `PhotoQuery` |
+| Embedding Pipeline | `embedding-pipeline` | Not started | Produces `EmbeddingRecord`, writes through `PhotoStore` |
+| Error Handling | `error-handling` | Not started | `AppError`, `RetryPolicy`, `ErrorReporting` — everyone else imports this |
+
+`database-structure` is real now — `PhotoStore`/`PhotoQuery` are implemented against actual SQLite in `Sources/GeoImageSearch/Storage/`. Every other feature should build against the real thing, not a mock, from here on.
 
 ## Core types
 
@@ -48,7 +50,7 @@ struct TripCluster: Codable {
 }
 ```
 
-**Open dependency:** `EmbeddingRecord.vector`'s dimension depends on the CoreML model choice (TODOS.md item 5, not yet decided). Database Structure's `photo_embeddings` schema can't be finalized until Embedding Pipeline picks a model. This is exactly the "feature A needs feature B's output" case — coordinate before either merges, don't let Database Structure guess a dimension and Embedding Pipeline diverge from it.
+**Open dependency, resolved:** `EmbeddingRecord.vector`'s dimension depends on the CoreML model choice (TODOS.md item 5, still not decided). Rather than guessing a number, `database-structure` made the dimension a runtime parameter to `Schema.create(in:embeddingDimension:)` — so `embedding-pipeline` passes its actual model's dimension when it sets up storage, no schema coordination or migration needed once the model is picked. This is the pattern to reach for generally when one feature's shape depends on another's not-yet-made decision: parameterize instead of guessing a placeholder value.
 
 ## Database schema (owned by `database-structure`, written to by `photo-icloud-extraction` and `embedding-pipeline`)
 
@@ -75,10 +77,21 @@ CREATE VIRTUAL TABLE IF NOT EXISTS photos_rtree USING rtree(
     min_lon, max_lon
 );
 
--- Dimension is a placeholder — see "Open dependency" above.
+-- Dimension is a runtime parameter (Schema.photoEmbeddingsSQL(dimension:)),
+-- not hardcoded — resolves the "open dependency" below without database-structure
+-- needing to guess embedding-pipeline's eventual CoreML model choice.
 CREATE VIRTUAL TABLE IF NOT EXISTS photo_embeddings USING vec0(
     asset_id TEXT PRIMARY KEY,
-    embedding FLOAT[512]
+    embedding FLOAT[?]
+);
+
+-- Additive, beyond this doc's original 3-table schema: vec0's photo_embeddings
+-- table only has room for the id + vector (2 columns). EmbeddingRecord also
+-- carries modelVersion/generatedAt, which live here instead.
+CREATE TABLE IF NOT EXISTS photo_embedding_meta (
+    asset_id TEXT PRIMARY KEY,
+    model_version TEXT NOT NULL,
+    generated_at INTEGER NOT NULL
 );
 ```
 
@@ -209,13 +222,11 @@ Per `/plan-eng-review`: one shared `ErrorReporting` surface (consistent UI prese
 
 ## Parallelization guide
 
-**Build first, or at least merge first:** `error-handling`. Every other feature imports `AppError`/`RetryPolicy`/`ErrorReporting`. It's small and has no dependencies on anything else in this doc — cheapest to get real and merged early so nobody's stubbing it out themselves.
+**Still worth building early:** `error-handling`. Every other feature imports `AppError`/`RetryPolicy`/`ErrorReporting`, and it hasn't landed yet — `photo-icloud-extraction`, `add-3dmap`, `embedding-pipeline`, and `q-and-a-ai-agent` should each use a small local placeholder error type for now (not build their own permanent retry infrastructure) and swap to the real thing once this merges.
 
-**Fully parallel from day one, against this contract:** `photo-icloud-extraction`, `database-structure`, `add-3dmap`, and `embedding-pipeline` can all start immediately. Each builds against the types and protocols above; none needs another feature's actual implementation. Use an in-memory mock of `PhotoStore`/`PhotoQuery` where you need one to test against.
+**Unblocked now that `database-structure` is merged:** `photo-icloud-extraction`, `add-3dmap`, and `embedding-pipeline` should build against the real `PhotoStore`/`PhotoQuery` (`Sources/GeoImageSearch/Storage/`) directly — no more mocking needed for those.
 
-**Also parallel, but real correctness waits on `database-structure`:** `q-and-a-ai-agent` can be fully written and unit-tested against a mock `PhotoQuery` in parallel with everyone else. Whether it actually answers questions correctly can't be verified until `database-structure`'s real implementation exists to query against.
-
-**Suggested merge order:** `error-handling` -> `database-structure` -> everything else, in any order. `database-structure` is the one feature the others integrate against for real (not just against its protocol), so landing it early de-risks the rest.
+**`q-and-a-ai-agent`:** can be fully written against the real `PhotoQuery` too. Its `semantic_search` tool specifically needs `embedding-pipeline`'s work to return meaningful results (real embeddings have to exist in `photo_embeddings`) — build and test the other three tools against real data now, stub `semantic_search`'s results until embeddings exist.
 
 ## Changing the contract
 
