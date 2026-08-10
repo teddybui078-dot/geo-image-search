@@ -211,4 +211,26 @@ import Foundation
 
         #expect(results.map(\.id) == ["wrapped"])
     }
+
+    // Regression test: GeoMath's kmPerDegreeLatitude (hardcoded to 111.32,
+    // a real-Earth/oblate-spheroid approximation) used to disagree with
+    // earthRadiusKm's implied ~111.19493 km/degree (haversineDistanceKm
+    // models Earth as a perfect sphere). That made latDelta systematically
+    // narrower than the app's own haversine formula requires, at every
+    // latitude, not just near poles — a point exactly radiusKm due south of
+    // the query center (right on the boundary) fell just outside minLat and
+    // was silently dropped before the exact haversine cutoff ever ran.
+    // This point's latitude is the exact boundary computed from
+    // earthRadiusKm's sphere for a 100km radius due south of 45°N.
+    @Test func byLocationIncludesPointExactlyAtRadiusDueSouth() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        try await store.upsert([PhotoAssetFixtures.makeAsset(id: "due-south-edge", latitude: 44.1006783941, longitude: 0)])
+
+        let straightLineDistance = GeoMath.haversineDistanceKm(lat1: 45, lon1: 0, lat2: 44.1006783941, lon2: 0)
+        #expect(abs(straightLineDistance - 100) < 0.001) // sanity check: fixture sits right on the 100km boundary
+
+        let results = try await query.byLocation(latitude: 45, longitude: 0, radiusKm: 100)
+
+        #expect(results.map(\.id) == ["due-south-edge"])
+    }
 }

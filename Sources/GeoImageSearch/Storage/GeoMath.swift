@@ -4,8 +4,20 @@ import Foundation
 // index-accelerated, but only an approximation of a circle), followed by an
 // exact haversine cutoff to enforce the true radiusKm circle.
 enum GeoMath {
-    private static let kmPerDegreeLatitude = 111.32
     private static let earthRadiusKm = 6371.0
+    // Derived from earthRadiusKm, not a separately-sourced constant (was
+    // hardcoded to 111.32, a real-Earth/oblate-spheroid approximation,
+    // while haversineDistanceKm below models Earth as a perfect sphere of
+    // radius earthRadiusKm — implying ~111.19493 km/degree). That mismatch
+    // made boundingBox's latDelta systematically narrower than what the
+    // app's own haversine formula requires for the same radiusKm, at every
+    // latitude, not just near poles: verified numerically that a point
+    // exactly radiusKm due north/south of the query center — right on the
+    // requested boundary — fell just outside minLat/maxLat and was silently
+    // dropped by the R-Tree prefilter before the exact haversine cutoff
+    // ever ran. Deriving this constant instead of hardcoding a second,
+    // disagreeing one keeps both formulas modeling the same sphere.
+    private static let kmPerDegreeLatitude = earthRadiusKm * .pi / 180
 
     struct BoundingBox {
         let minLat: Double
