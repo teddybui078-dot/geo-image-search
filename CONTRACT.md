@@ -8,7 +8,7 @@ Feature areas map 1:1 to `TODOS.md`'s Build Breakdown and to suggested branch na
 
 | Feature area | Branch name | Status | Owns |
 |---|---|---|---|
-| Photo/iCloud Extraction | `photo-icloud-extraction` | Not started | Produces `PhotoAsset` records, writes through `PhotoStore` |
+| Photo/iCloud Extraction | `photo-icloud-extraction` | **Ingestion pipeline done; limited-access UI + real coverage measurement still open** | Produces `PhotoAsset` records, writes through `PhotoStore` |
 | Database Structure | `database-structure` | **✅ Merged (PR #1)** | Implements `PhotoStore` and `PhotoQuery`, owns the SQL schema |
 | 3D Interactive Map | `add-3dmap` | Not started | The `WebViewBridge` message protocol, globe rendering |
 | Q&A AI Agent | `q-and-a-ai-agent` | Not started | Agent tool schemas, calls `PhotoQuery` |
@@ -249,7 +249,7 @@ Per `/plan-eng-review`: one shared `ErrorReporting` surface (consistent UI prese
 
 ## Parallelization guide
 
-**Landed on `error-handling`, not yet merged to `main`:** `AppError`/`RetryPolicy`/`ErrorReporting`/`RetryExecutor` are implemented against the shapes above. `photo-icloud-extraction`, `add-3dmap`, `embedding-pipeline`, and `q-and-a-ai-agent` should keep using a small local placeholder error type until `error-handling` actually merges, then swap to the real thing.
+**Merged to `main`:** `AppError`/`RetryPolicy`/`ErrorReporting`/`RetryExecutor` are implemented against the shapes above (PR #2). `photo-icloud-extraction` already builds against the real thing (`PhotosRetryPolicy`, `GeocodingRetryPolicy`) — `add-3dmap`, `embedding-pipeline`, and `q-and-a-ai-agent` should too now, no more local placeholder error types needed.
 
 **Unblocked now that `database-structure` is merged:** `photo-icloud-extraction`, `add-3dmap`, and `embedding-pipeline` should build against the real `PhotoStore`/`PhotoQuery` (`Sources/GeoImageSearch/Storage/`) directly — no more mocking needed for those.
 
