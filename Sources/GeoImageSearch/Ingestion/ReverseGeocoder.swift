@@ -37,9 +37,18 @@ protocol ReverseGeocoding: Sendable {
 
 // Actor, not a struct: the in-memory bucket cache and last-call timestamp
 // are mutable state shared across every call during one ingestion run, and
-// actor isolation makes concurrent geocoding of a batch safe without a
-// separate lock. Per DESIGN.md: "~1km bucketed + cached + throttled" — this
-// is the one place all three live together.
+// actor isolation makes concurrent geocoding of a batch memory-safe without
+// a separate lock. Per DESIGN.md: "~1km bucketed + cached + throttled" —
+// this is the one place all three live together.
+//
+// Known residual gap, not fixed: the cache check in placeName() happens
+// before throttle()/the outbound call, so two concurrent calls for the
+// *same* bucket can both miss the cache and both fire a lookup before
+// either writes back — wasted duplicate work, not an incorrectness. Not
+// currently reachable: PhotoLibraryIngestor calls this strictly
+// sequentially (a plain `for` loop, no TaskGroup). Fixing it properly means
+// tracking in-flight per-key requests, which isn't worth the complexity
+// until something actually calls this concurrently.
 //
 // The cache is process-lifetime only (not persisted across relaunches):
 // CONTRACT.md's schema has no separate geocode-cache table, and it doesn't
@@ -79,10 +88,22 @@ actor ReverseGeocoder: ReverseGeocoding {
         return resolved
     }
 
+    // Actors are reentrant at `await` points — a second `placeName()` call
+    // can start running while this one is suspended inside `delaying.delay`.
+    // Found in review (Codex + independent Claude subagent, same root
+    // cause): the original version only stamped `lastCallAt` in a `defer`
+    // that fired after the delay completed, so a reentrant call read the
+    // *stale* `lastCallAt`, computed the same `remaining` wait, and both
+    // calls fired their outbound lookups back-to-back — silently defeating
+    // the throttle. Reserving the slot by writing `lastCallAt` synchronously
+    // (no `await` between the read and the write) closes that window: a
+    // reentrant call sees the already-reserved slot and queues behind it.
     private func throttle() async throws {
-        defer { lastCallAt = Date() }
-        guard let lastCallAt else { return }
-        let remaining = minimumCallInterval - Date().timeIntervalSince(lastCallAt)
+        let now = Date()
+        let earliestNextCall = (lastCallAt ?? .distantPast).addingTimeInterval(minimumCallInterval)
+        let reservedSlot = max(earliestNextCall, now)
+        lastCallAt = reservedSlot
+        let remaining = reservedSlot.timeIntervalSince(now)
         if remaining > 0 {
             try await delaying.delay(remaining)
         }
