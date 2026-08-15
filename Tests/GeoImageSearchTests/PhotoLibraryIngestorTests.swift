@@ -1,0 +1,148 @@
+import Photos
+import Testing
+import Foundation
+@testable import GeoImageSearch
+
+@Suite struct PhotoLibraryIngestorTests {
+    private func snapshot(
+        _ id: String,
+        latitude: Double? = 48.8566,
+        longitude: Double? = 2.3522,
+        date: Date = Date(timeIntervalSince1970: 1_700_000_000)
+    ) -> PhotoAssetSnapshot {
+        PhotoAssetSnapshot(
+            localIdentifier: id,
+            latitude: latitude, longitude: longitude,
+            creationDate: date, modificationDate: date,
+            isLivePhoto: false
+        )
+    }
+
+    @Test func deniedAccessThrowsAndWritesNothing() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        let reporter = SpyErrorReporter()
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .denied)),
+            fetcher: SerialFakeFetcher(results: [.success([snapshot("a")])]),
+            geocoder: FakeReverseGeocoder(placeNamesByCoordinate: [:]),
+            errorReporter: reporter
+        )
+
+        await #expect(throws: AppError.self) {
+            try await ingestor.run()
+        }
+        #expect(reporter.reported.map(\.error.logDescription) == [AppError.photosPermissionDenied.logDescription])
+        #expect(try await query.allActiveIdentifiers().isEmpty)
+    }
+
+    @Test func firstRunUpsertsEveryAssetAndResolvesPlaceNames() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .authorized)),
+            fetcher: SerialFakeFetcher(results: [.success([snapshot("a"), snapshot("b", latitude: nil, longitude: nil)])]),
+            geocoder: FakeReverseGeocoder(placeNamesByCoordinate: [GeoBucket.key(latitude: 48.8566, longitude: 2.3522): "Paris, France"])
+        )
+
+        let result = try await ingestor.run()
+
+        #expect(result.upsertedCount == 2)
+        #expect(result.deletedCount == 0)
+        #expect(result.totalLibraryAssets == 2)
+        #expect(result.gpsCoverage.assetsWithGPS == 1)
+        #expect(result.isLimitedAccess == false)
+
+        let stored = try await query.byDateRange(
+            start: Date(timeIntervalSince1970: 0),
+            end: Date(timeIntervalSince1970: 2_000_000_000)
+        )
+        #expect(stored.first(where: { $0.id == "a" })?.placeName == "Paris, France")
+        #expect(stored.first(where: { $0.id == "b" })?.placeName == nil)
+    }
+
+    @Test func relaunchOnlyTouchesNewChangedAndDeletedAssets() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        let unchangedDate = Date(timeIntervalSince1970: 1_000)
+        try await store.upsert([
+            PhotoAssetFixtures.makeAsset(id: "unchanged", updatedAt: unchangedDate),
+            PhotoAssetFixtures.makeAsset(id: "gone", updatedAt: unchangedDate)
+        ])
+
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .authorized)),
+            fetcher: SerialFakeFetcher(results: [
+                .success([
+                    snapshot("unchanged", date: unchangedDate),
+                    snapshot("new", date: Date(timeIntervalSince1970: 2_000))
+                ])
+            ]),
+            geocoder: FakeReverseGeocoder(placeNamesByCoordinate: [:])
+        )
+
+        let result = try await ingestor.run()
+
+        #expect(result.upsertedCount == 1) // only "new" — "unchanged" is skipped
+        #expect(result.deletedCount == 1)  // "gone" is no longer in the library
+
+        let identifiers = try await query.allActiveIdentifiers()
+        #expect(Set(identifiers.keys) == ["unchanged", "new"])
+    }
+
+    @Test func limitedAccessFlagPropagatesToResult() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .limited)),
+            fetcher: SerialFakeFetcher(results: [.success([])]),
+            geocoder: FakeReverseGeocoder(placeNamesByCoordinate: [:])
+        )
+
+        let result = try await ingestor.run()
+        #expect(result.isLimitedAccess)
+    }
+
+    @Test func fetchIsRetriedThenSucceeds() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        let fetcher = SerialFakeFetcher(results: [
+            .failure(AppError.photosFetchFailed(underlying: TestError())),
+            .success([snapshot("a")])
+        ])
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .authorized)),
+            fetcher: fetcher,
+            geocoder: FakeReverseGeocoder(placeNamesByCoordinate: [:])
+        )
+
+        let result = try await ingestor.run()
+
+        #expect(result.upsertedCount == 1)
+        #expect(fetcher.callCount == 2)
+    }
+
+    @Test func geocodingFailureDegradesToNilPlaceNameRatherThanAborting() async throws {
+        struct FailingGeocoder: ReverseGeocoding {
+            func placeName(latitude: Double, longitude: Double) async throws -> String? {
+                throw AppError.geocodingFailed(underlying: TestError())
+            }
+        }
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        let reporter = SpyErrorReporter()
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .authorized)),
+            fetcher: SerialFakeFetcher(results: [.success([snapshot("a")])]),
+            geocoder: FailingGeocoder(),
+            errorReporter: reporter
+        )
+
+        let result = try await ingestor.run()
+
+        #expect(result.upsertedCount == 1)
+        #expect(reporter.reported.contains { $0.context == "PhotoLibraryIngestor.resolvedPlaceName" })
+    }
+}
+
+private struct TestError: Error {}
