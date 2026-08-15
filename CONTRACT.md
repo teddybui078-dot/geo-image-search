@@ -11,11 +11,11 @@ Feature areas map 1:1 to `TODOS.md`'s Build Breakdown and to suggested branch na
 | Photo/iCloud Extraction | `photo-icloud-extraction` | Not started | Produces `PhotoAsset` records, writes through `PhotoStore` |
 | Database Structure | `database-structure` | **✅ Merged (PR #1)** | Implements `PhotoStore` and `PhotoQuery`, owns the SQL schema |
 | 3D Interactive Map | `add-3dmap` | Not started | The `WebViewBridge` message protocol, globe rendering |
-| Q&A AI Agent | `q-and-a-ai-agent` | Not started | Agent tool schemas, calls `PhotoQuery` |
+| Q&A AI Agent | `q-and-a-ai-agent` | In progress | Agent tool schemas, calls `PhotoQuery`, the `GlobeUpdating` protocol |
 | Embedding Pipeline | `embedding-pipeline` | Not started | Produces `EmbeddingRecord`, writes through `PhotoStore` |
-| Error Handling | `error-handling` | In progress | `AppError`, `RetryPolicy`, `ErrorReporting`, `RetryExecutor` — everyone else imports this |
+| Error Handling | `error-handling` | **✅ Merged (PR #2)** | `AppError`, `RetryPolicy`, `ErrorReporting`, `RetryExecutor` — everyone else imports this |
 
-`database-structure` is real now — `PhotoStore`/`PhotoQuery` are implemented against actual SQLite in `Sources/GeoImageSearch/Storage/`. Every other feature should build against the real thing, not a mock, from here on.
+`database-structure` and `error-handling` are both real now — `PhotoStore`/`PhotoQuery` against actual SQLite in `Sources/GeoImageSearch/Storage/`, and `AppError`/`RetryPolicy`/`ErrorReporting`/`RetryExecutor` in `Sources/GeoImageSearch/Common/`. Every other feature should build against the real thing, not a mock or a local placeholder, from here on.
 
 ## Core types
 
@@ -139,6 +139,31 @@ protocol PhotoQuery {
 
 `webviewError` is what backs the native fallback UI decided in `/plan-eng-review` (`WKNavigationDelegate` + a native SwiftUI error state) — any JS-side failure that isn't a clean load failure should still emit this so the fallback can catch it.
 
+## Globe update protocol (owned by `q-and-a-ai-agent`, implemented by `add-3dmap`)
+
+`add-3dmap` hasn't landed yet — `WebViewBridge` is still an empty stub — so `q-and-a-ai-agent` defined a small Swift protocol the chat UI codes against today, backed by a logging no-op (`LoggingGlobeUpdater`). This is additive (a new protocol, not a change to an existing locked type), so it's landing without cross-branch coordination per "Changing the contract" below. When `add-3dmap` is built, its real `WebViewBridge` should conform `GlobeUpdating` to the native→JS bridge messages above (`setPins`/`focusRegion`/`highlightAssets` map 1:1 to the `setPins`/`focusRegion`/`highlightAssets` JSON messages) — the chat UI call site doesn't change.
+
+```swift
+protocol GlobeUpdating: Sendable {
+    func setPins(_ pins: [GlobePin]) async
+    func focusRegion(_ bounds: GlobeBounds) async
+    func highlightAssets(ids: [String]) async
+}
+
+struct GlobePin: Sendable, Equatable {
+    let id: String
+    let lat: Double
+    let lon: Double
+}
+
+struct GlobeBounds: Sendable, Equatable {
+    let minLat: Double
+    let maxLat: Double
+    let minLon: Double
+    let maxLon: Double
+}
+```
+
 ## Agent tool schemas (owned by `q-and-a-ai-agent`)
 
 OpenAI function-calling format. Four tools, matching `PhotoQuery` 1:1 (`allActivePhotosWithLocation` has no tool — it's map-only).
@@ -236,11 +261,9 @@ Per `/plan-eng-review`: one shared `ErrorReporting` surface (consistent UI prese
 
 ## Parallelization guide
 
-**Landed on `error-handling`, not yet merged to `main`:** `AppError`/`RetryPolicy`/`ErrorReporting`/`RetryExecutor` are implemented against the shapes above. `photo-icloud-extraction`, `add-3dmap`, `embedding-pipeline`, and `q-and-a-ai-agent` should keep using a small local placeholder error type until `error-handling` actually merges, then swap to the real thing.
+**Unblocked now that `database-structure` and `error-handling` are both merged:** `photo-icloud-extraction`, `add-3dmap`, and `embedding-pipeline` should build against the real `PhotoStore`/`PhotoQuery` (`Sources/GeoImageSearch/Storage/`) and the real `AppError`/`RetryPolicy`/`ErrorReporting`/`RetryExecutor` (`Sources/GeoImageSearch/Common/`) directly — no more mocking or local placeholder error types needed for those. Any worktree branched before PR #2 merged should merge `main` in before continuing (a stale worktree's `Common/` files are still empty stubs from before `error-handling` landed).
 
-**Unblocked now that `database-structure` is merged:** `photo-icloud-extraction`, `add-3dmap`, and `embedding-pipeline` should build against the real `PhotoStore`/`PhotoQuery` (`Sources/GeoImageSearch/Storage/`) directly — no more mocking needed for those.
-
-**`q-and-a-ai-agent`:** can be fully written against the real `PhotoQuery` too. Its `semantic_search` tool specifically needs `embedding-pipeline`'s work to return meaningful results (real embeddings have to exist in `photo_embeddings`) — build and test the other three tools against real data now, stub `semantic_search`'s results until embeddings exist.
+**`q-and-a-ai-agent`:** built against the real `PhotoQuery` and the real error-handling types. Its `semantic_search` tool specifically needs `embedding-pipeline`'s work to return meaningful results (real embeddings have to exist in `photo_embeddings`) — it's stubbed (no results, explanatory message) until embeddings exist; the other three tools are built and tested against the real `SQLitePhotoQuery` now.
 
 ## Changing the contract
 
