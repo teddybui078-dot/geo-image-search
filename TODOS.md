@@ -47,8 +47,11 @@ Apple's system `libsqlite3` disables `sqlite3_auto_extension`, so the standard s
 - Background-queue, bounded-concurrency generation with visible progress and an optional date-range scope for first-run indexing
 
 ### 6. Error Handling (cross-cutting — spans Extraction, Database writes, and the Agent)
-- One shared error-reporting surface across PhotosKit, CLGeocoder, and LLM calls (consistent UI presentation)
-- Per-boundary retry policy for each (different failure semantics — PhotosKit/iCloud, geocoding rate limits, LLM timeouts/rate limits all behave differently)
+**Done (`error-handling` branch):** `AppError`/`RetryPolicy`/`ErrorReporting` are implemented against CONTRACT.md's locked shapes.
+- ~~One shared error-reporting surface across PhotosKit, CLGeocoder, and LLM calls (consistent UI presentation)~~ **Done** — `ErrorReporter` (`Sources/GeoImageSearch/Common/ErrorReporter.swift`), backed by `os.Logger` through an injectable `ErrorLogSink` so call sites format every `AppError` the same way instead of ad hoc messages per boundary.
+- ~~Per-boundary retry policy for each (different failure semantics — PhotosKit/iCloud, geocoding rate limits, LLM timeouts/rate limits all behave differently)~~ **Done** — `PhotosRetryPolicy`, `GeocodingRetryPolicy`, and `LLMRetryPolicy`, each with its own `maxAttempts`/backoff curve/retryability rules (e.g. `llmInvalidAPIKey` and `photosPermissionDenied` are explicitly not retryable). A shared `RetryExecutor` (injectable delay) runs any policy against an async operation so boundaries don't hand-roll their own retry loop.
+
+Every other feature worktree (`photo-icloud-extraction`, `add-3dmap`, `embedding-pipeline`, `q-and-a-ai-agent`) should swap its local placeholder error type for the real `AppError`/`RetryPolicy`/`ErrorReporting` in `Sources/GeoImageSearch/Common/` once this branch merges.
 
 ---
 

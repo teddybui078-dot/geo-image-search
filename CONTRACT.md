@@ -13,7 +13,7 @@ Feature areas map 1:1 to `TODOS.md`'s Build Breakdown and to suggested branch na
 | 3D Interactive Map | `add-3dmap` | Not started | The `WebViewBridge` message protocol, globe rendering |
 | Q&A AI Agent | `q-and-a-ai-agent` | Not started | Agent tool schemas, calls `PhotoQuery` |
 | Embedding Pipeline | `embedding-pipeline` | Not started | Produces `EmbeddingRecord`, writes through `PhotoStore` |
-| Error Handling | `error-handling` | Not started | `AppError`, `RetryPolicy`, `ErrorReporting` — everyone else imports this |
+| Error Handling | `error-handling` | In progress | `AppError`, `RetryPolicy`, `ErrorReporting`, `RetryExecutor` — everyone else imports this |
 
 `database-structure` is real now — `PhotoStore`/`PhotoQuery` are implemented against actual SQLite in `Sources/GeoImageSearch/Storage/`. Every other feature should build against the real thing, not a mock, from here on.
 
@@ -216,13 +216,27 @@ protocol RetryPolicy {
 protocol ErrorReporting {
     func report(_ error: AppError, context: String)
 }
+
+// Shared retry loop so a boundary drives its own RetryPolicy without
+// hand-rolling attempt-counting/backoff. Delay is injectable for tests.
+enum RetryExecutor {
+    static func run<Value>(
+        policy: any RetryPolicy,
+        delaying: any RetryDelaying = TaskSleepDelaying(),
+        operation: () async throws -> Value
+    ) async throws -> Value
+}
+
+protocol RetryDelaying {
+    func delay(_ duration: TimeInterval) async throws
+}
 ```
 
-Per `/plan-eng-review`: one shared `ErrorReporting` surface (consistent UI presentation), but each boundary (PhotosKit/iCloud, CLGeocoder, OpenAI) gets its own `RetryPolicy` instance — different failure semantics, not one-size-fits-all.
+Per `/plan-eng-review`: one shared `ErrorReporting` surface (consistent UI presentation), but each boundary (PhotosKit/iCloud, CLGeocoder, OpenAI) gets its own `RetryPolicy` instance — different failure semantics, not one-size-fits-all. `RetryExecutor` is additive on top of that split: it's the one shared loop every boundary runs its own policy through, so retry attempt-counting/backoff logic isn't duplicated per boundary.
 
 ## Parallelization guide
 
-**Still worth building early:** `error-handling`. Every other feature imports `AppError`/`RetryPolicy`/`ErrorReporting`, and it hasn't landed yet — `photo-icloud-extraction`, `add-3dmap`, `embedding-pipeline`, and `q-and-a-ai-agent` should each use a small local placeholder error type for now (not build their own permanent retry infrastructure) and swap to the real thing once this merges.
+**Landed on `error-handling`, not yet merged to `main`:** `AppError`/`RetryPolicy`/`ErrorReporting`/`RetryExecutor` are implemented against the shapes above. `photo-icloud-extraction`, `add-3dmap`, `embedding-pipeline`, and `q-and-a-ai-agent` should keep using a small local placeholder error type until `error-handling` actually merges, then swap to the real thing.
 
 **Unblocked now that `database-structure` is merged:** `photo-icloud-extraction`, `add-3dmap`, and `embedding-pipeline` should build against the real `PhotoStore`/`PhotoQuery` (`Sources/GeoImageSearch/Storage/`) directly — no more mocking needed for those.
 
