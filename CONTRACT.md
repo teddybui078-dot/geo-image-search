@@ -108,27 +108,32 @@ protocol PhotoStore {
 ## Read interface (implemented by `database-structure`; called by `q-and-a-ai-agent` and `add-3dmap`)
 
 ```swift
+struct StoredPhotoIdentity {
+    let updatedAt: Date
+    let placeName: String?
+}
+
 protocol PhotoQuery {
     func byLocation(latitude: Double, longitude: Double, radiusKm: Double) async throws -> [PhotoAsset]
     func byDateRange(start: Date, end: Date) async throws -> [PhotoAsset]
     func bySimilarity(embedding: [Float], limit: Int) async throws -> [PhotoAsset]
     func clusterTrips(minStopDuration: TimeInterval, maxTravelGap: TimeInterval) async throws -> [TripCluster]
-    func allActivePhotosWithLocation() async throws -> [PhotoAsset]  // feeds the globe's initial pin load
-    func allActiveIdentifiers() async throws -> [String: Date]       // id -> updatedAt, GPS or not — feeds relaunch sync's diff
+    func allActivePhotosWithLocation() async throws -> [PhotoAsset]                    // feeds the globe's initial pin load
+    func allActiveIdentifiers() async throws -> [String: StoredPhotoIdentity]          // id -> (updatedAt, placeName), GPS or not — feeds relaunch sync's diff
 }
 ```
 
 `add-3dmap` only needs `allActivePhotosWithLocation()` to build the initial globe view — it does not need the other methods, and does not need to wait on `q-and-a-ai-agent`'s work.
 
-**Additive change (`photo-icloud-extraction`):** `allActiveIdentifiers()` was added after this file's original four-method draft, per the "Changing the contract" rule for additive changes (new method, no coordination needed). Relaunch sync needs every active photo's stable id + last-known `updatedAt` to diff against a fresh library enumeration — including no-GPS photos, which `allActivePhotosWithLocation()` deliberately excludes. See "Relaunch sync strategy" below for how it's used.
+**Additive change (`photo-icloud-extraction`):** `allActiveIdentifiers()` was added after this file's original four-method draft, per the "Changing the contract" rule for additive changes (new method, no coordination needed). Relaunch sync needs every active photo's stable id + last-known `updatedAt` to diff against a fresh library enumeration — including no-GPS photos, which `allActivePhotosWithLocation()` deliberately excludes. `placeName` was added to the return value in adversarial review (Codex): a re-upserted photo whose geocode call fails needs its previously-resolved place name to fall back on, or a transient CLGeocoder failure silently erases previously-good data. See "Relaunch sync strategy" below for how it's used.
 
 ## Relaunch sync strategy (owned by `photo-icloud-extraction`)
 
 **Decided:** full library enumeration on every launch, diffed client-side against `allActiveIdentifiers()` — not Apple's `PHPersistentChangeToken` API, and not a separate "first launch only" code path.
 
 - `PHAsset.fetchAssets(with:)` is a lightweight, local, metadata-only call (no image bytes, no network) even at personal-library scale (~50k assets per DESIGN.md), so a full enumeration every launch is cheap — the "one-shot full ingest is expensive" concern doesn't actually apply to metadata.
-- `photos.updated_at` is populated from `PHAsset.modificationDate`, not "when our DB row last changed" — that's what makes it usable as the diff signal: an asset is upserted only if it's new (absent from `allActiveIdentifiers()`) or its `PHAsset.modificationDate` is newer than the stored `updatedAt`. Everything else is skipped (no re-geocoding, no re-write).
-- An id present in `allActiveIdentifiers()` but absent from the fresh enumeration is soft-deleted via `markDeleted`.
+- `photos.updated_at` is populated from `PHAsset.modificationDate`, not "when our DB row last changed" — that's what makes it usable as the diff signal: an asset is upserted only if it's new (absent from `allActiveIdentifiers()`) or its `PHAsset.modificationDate` is newer than the stored `updatedAt` (compared at whole-second precision, matching how it's actually stored). Everything else is skipped (no re-geocoding, no re-write).
+- An id present in `allActiveIdentifiers()` but absent from the fresh enumeration is soft-deleted via `markDeleted` — **except under limited Photos access** (`PHAuthorizationStatus.limited`, "Selected Photos"), where the fresh enumeration only covers the user's currently-selected subset, and a stored id missing from it might just be outside that selection, not actually gone from the library. Deletions are skipped entirely while access is limited; only a full-access sync prunes. Found in adversarial review (Codex + an independent Claude subagent, same finding): the original version treated "missing from a limited fetch" as "deleted" and would silently soft-delete every previously-indexed photo outside the current selection the moment access was downgraded from full to limited.
 - First launch falls out of the same code path for free: the stored identifier set is empty, so every enumerated asset is "new" — no separate one-shot-ingest branch needed.
 - `PHPersistentChangeToken`/`fetchPersistentChanges(since:)` would avoid the enumeration walk entirely, but was not used — its exact API shape couldn't be verified against real device/library state in this build environment, and the diff-against-`updated_at` approach is simpler to test and already cheap enough at this scale. Revisit if profiling on a real ~50k-photo library shows the enumeration itself is a bottleneck.
 

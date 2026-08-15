@@ -16,31 +16,41 @@ enum SyncPlanner {
 
     static func plan(
         librarySnapshots: [PhotoAssetSnapshot],
-        storedIdentifiers: [String: Date],
-        now: Date
+        storedIdentifiers: [String: StoredPhotoIdentity]
     ) -> Plan {
         let libraryIDs = Set(librarySnapshots.map(\.localIdentifier))
 
         let toUpsert = librarySnapshots.filter { snapshot in
-            guard let storedUpdatedAt = storedIdentifiers[snapshot.localIdentifier] else {
+            guard let stored = storedIdentifiers[snapshot.localIdentifier] else {
                 return true // absent from the store — new asset
             }
             // Compare at whole-second precision via unixSecondsClamped, not
             // as raw Dates: `updated_at` is stored as a SQLite INTEGER
             // (DateConversion.unixSecondsClamped truncates fractional
-            // seconds on write), so storedUpdatedAt always lands on a whole
-            // second. PHAsset.modificationDate almost always carries
+            // seconds on write), so stored.updatedAt always lands on a
+            // whole second. PHAsset.modificationDate almost always carries
             // fractional seconds — comparing it untruncated against a
             // truncated stored value with strict `>` was true on nearly
             // every asset, every run, silently turning "incremental diff"
             // back into "re-upsert (and re-geocode) everything every
             // relaunch." Truncating both sides the same way is what makes
             // "unchanged since last sync" actually mean unchanged.
-            return snapshot.effectiveUpdatedAt(now: now).unixSecondsClamped > storedUpdatedAt.unixSecondsClamped
+            //
+            // Residual limitation, not fixable without a schema change:
+            // two genuine modifications to the same asset landing within
+            // the same whole second (both sides then truncate to the same
+            // value) would be missed. CONTRACT.md's `updated_at INTEGER`
+            // column is locked, and two real edits within one second is
+            // rare enough for a personal library that this isn't worth a
+            // migration to fix.
+            return snapshot.effectiveUpdatedAt.unixSecondsClamped > stored.updatedAt.unixSecondsClamped
         }
 
         // Stored but missing from the fresh enumeration — the library no
         // longer has it. Soft-deleted, not hard-deleted (PhotoStore.markDeleted).
+        // Caller (PhotoLibraryIngestor) is responsible for NOT acting on
+        // this under limited Photos access, where "missing from the fetch"
+        // doesn't mean "actually gone" — see its own comment for why.
         let idsToMarkDeleted = storedIdentifiers.keys.filter { !libraryIDs.contains($0) }
 
         return Plan(toUpsert: toUpsert, idsToMarkDeleted: idsToMarkDeleted)

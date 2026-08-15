@@ -30,6 +30,10 @@ struct PhotoLibraryIngestor {
         errorReporter: any ErrorReporting = ErrorReporter(),
         batchSize: Int = 200
     ) {
+        // stride(from:to:by:) traps on a zero/negative step — fail fast
+        // here with a clear message instead of a confusing crash deep in
+        // run(). Found in review (Codex).
+        precondition(batchSize > 0, "batchSize must be positive")
         self.store = store
         self.query = query
         self.permissionManager = permissionManager
@@ -71,7 +75,7 @@ struct PhotoLibraryIngestor {
         let storedIdentifiers = try await query.allActiveIdentifiers()
 
         let now = Date()
-        let plan = SyncPlanner.plan(librarySnapshots: snapshots, storedIdentifiers: storedIdentifiers, now: now)
+        let plan = SyncPlanner.plan(librarySnapshots: snapshots, storedIdentifiers: storedIdentifiers)
 
         var upsertedCount = 0
         for start in stride(from: 0, to: plan.toUpsert.count, by: batchSize) {
@@ -79,15 +83,28 @@ struct PhotoLibraryIngestor {
             var assets: [PhotoAsset] = []
             assets.reserveCapacity(end - start)
             for snapshot in plan.toUpsert[start..<end] {
-                let placeName = await resolvedPlaceName(for: snapshot)
+                let existingPlaceName = storedIdentifiers[snapshot.localIdentifier]?.placeName
+                let placeName = await resolvedPlaceName(for: snapshot, existingPlaceName: existingPlaceName)
                 assets.append(snapshot.toPhotoAsset(placeName: placeName, now: now))
             }
             try await store.upsert(assets)
             upsertedCount += assets.count
         }
 
-        if !plan.idsToMarkDeleted.isEmpty {
+        // Under "Selected Photos" limited access, PHAsset fetch only
+        // enumerates the user's currently-selected subset — a stored id
+        // absent from that fetch might just be outside the current
+        // selection, not actually removed from the library. Treating
+        // "missing from a limited fetch" as "deleted" would silently
+        // soft-delete every previously-indexed photo outside the selection
+        // the moment access is downgraded from full to limited. Only a
+        // full-access sync can safely prune; skip deletions entirely while
+        // limited. (Found in review: Codex + independent Claude subagent
+        // both flagged this as a silent-data-loss path.)
+        var deletedCount = 0
+        if !access.isLimitedAccess, !plan.idsToMarkDeleted.isEmpty {
             try await store.markDeleted(ids: plan.idsToMarkDeleted)
+            deletedCount = plan.idsToMarkDeleted.count
         }
 
         return IngestResult(
@@ -95,27 +112,32 @@ struct PhotoLibraryIngestor {
             totalLibraryAssets: snapshots.count,
             gpsCoverage: coverage,
             upsertedCount: upsertedCount,
-            deletedCount: plan.idsToMarkDeleted.count
+            deletedCount: deletedCount
         )
     }
 
     // Geocoding already retried internally against GeocodingRetryPolicy
     // (ReverseGeocoder) — a failure here means retries were exhausted.
-    // Degrades to no place name rather than aborting the whole ingest run:
-    // the photo still gets its GPS coords indexed. Known limitation, not
-    // fixed in this pass: SyncPlanner's diff is keyed on PHAsset
-    // modificationDate, not "missing place_name", so a photo that lands
-    // here stays ungeocoded until a future targeted backfill pass — plain
-    // relaunch sync won't retry it on its own unless the asset is otherwise
-    // modified.
-    private func resolvedPlaceName(for snapshot: PhotoAssetSnapshot) async -> String? {
+    // Degrades to `existingPlaceName` rather than aborting the whole
+    // ingest run: a re-upserted asset (already had a resolved place name
+    // from an earlier sync) keeps it instead of having it overwritten with
+    // nil by a transient failure — found in review (Codex): the original
+    // unconditional `nil` fallback silently erased previously-good data on
+    // every re-upsert that happened to hit a failed geocode. For a
+    // genuinely new asset, existingPlaceName is nil, so this still
+    // degrades to nil as before. Known limitation, not fixed in this pass:
+    // SyncPlanner's diff is keyed on PHAsset modificationDate, not "missing
+    // place_name", so a new asset that lands here stays ungeocoded until a
+    // future targeted backfill pass — plain relaunch sync won't retry it on
+    // its own unless the asset is otherwise modified.
+    private func resolvedPlaceName(for snapshot: PhotoAssetSnapshot, existingPlaceName: String?) async -> String? {
         guard let latitude = snapshot.latitude, let longitude = snapshot.longitude else { return nil }
         do {
             return try await geocoder.placeName(latitude: latitude, longitude: longitude)
         } catch {
             let appError = (error as? AppError) ?? .geocodingFailed(underlying: error)
             errorReporter.report(appError, context: "PhotoLibraryIngestor.resolvedPlaceName")
-            return nil
+            return existingPlaceName
         }
     }
 }

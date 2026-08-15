@@ -58,8 +58,12 @@ import Foundation
         )
         let asset = snapshot.toPhotoAsset(placeName: nil, now: now)
 
+        // capturedAt (display/query only) falls back to `now`; updatedAt
+        // (the diff signal) falls back to a fixed epoch sentinel, not
+        // `now` — see effectiveUpdatedAt's doc comment for why using `now`
+        // there made a dateless asset perpetually look "changed".
         #expect(asset.capturedAt == now)
-        #expect(asset.updatedAt == now)
+        #expect(asset.updatedAt == Date(timeIntervalSince1970: 0))
     }
 
     @Test func gpsCoverageReportsPercentAcrossMixedAssets() {

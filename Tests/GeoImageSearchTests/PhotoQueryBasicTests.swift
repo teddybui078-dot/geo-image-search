@@ -72,7 +72,7 @@ import Foundation
         let (store, query) = try await TestDatabase.makeStoreAndQuery()
         let updatedAt = Date(timeIntervalSince1970: 1_700_000_123)
         try await store.upsert([
-            PhotoAssetFixtures.makeAsset(id: "with-gps", updatedAt: updatedAt),
+            PhotoAssetFixtures.makeAsset(id: "with-gps", updatedAt: updatedAt, placeName: "Paris, France"),
             PhotoAssetFixtures.makeAsset(id: "no-gps", latitude: nil, longitude: nil, updatedAt: updatedAt),
             PhotoAssetFixtures.makeAsset(id: "deleted")
         ])
@@ -81,8 +81,10 @@ import Foundation
         let identifiers = try await query.allActiveIdentifiers()
 
         #expect(Set(identifiers.keys) == ["with-gps", "no-gps"])
-        #expect(identifiers["with-gps"] == updatedAt)
-        #expect(identifiers["no-gps"] == updatedAt)
+        #expect(identifiers["with-gps"]?.updatedAt == updatedAt)
+        #expect(identifiers["with-gps"]?.placeName == "Paris, France")
+        #expect(identifiers["no-gps"]?.updatedAt == updatedAt)
+        #expect(identifiers["no-gps"]?.placeName == nil)
     }
 
     // nonFiniteDatesDoNotCrash above proves NaN/+infinity don't crash the

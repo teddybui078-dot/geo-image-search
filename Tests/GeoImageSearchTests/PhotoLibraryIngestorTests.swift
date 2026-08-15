@@ -103,6 +103,62 @@ import Foundation
         #expect(result.isLimitedAccess)
     }
 
+    // Regression: under "Selected Photos" limited access, PHAsset fetch
+    // only returns the visible subset — a stored photo absent from that
+    // fetch might just be outside the current selection, not actually
+    // deleted. A previous version of this code soft-deleted it anyway.
+    @Test func limitedAccessDoesNotDeletePhotosOutsideVisibleSubset() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        try await store.upsert([PhotoAssetFixtures.makeAsset(id: "outside-selection")])
+
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .limited)),
+            // The limited fetch doesn't include "outside-selection" at all.
+            fetcher: SerialFakeFetcher(results: [.success([snapshot("visible")])]),
+            geocoder: FakeReverseGeocoder(placeNamesByCoordinate: [:])
+        )
+
+        let result = try await ingestor.run()
+
+        #expect(result.deletedCount == 0)
+        let identifiers = try await query.allActiveIdentifiers()
+        #expect(identifiers.keys.contains("outside-selection"))
+    }
+
+    // Regression: a re-upserted asset (modificationDate changed) whose
+    // geocode call fails must keep its previously-resolved place name, not
+    // have it overwritten with nil.
+    @Test func geocodeFailureOnReupsertPreservesExistingPlaceName() async throws {
+        struct FailingGeocoder: ReverseGeocoding {
+            func placeName(latitude: Double, longitude: Double) async throws -> String? {
+                throw AppError.geocodingFailed(underlying: TestError())
+            }
+        }
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        let originalDate = Date(timeIntervalSince1970: 1_000)
+        try await store.upsert([
+            PhotoAssetFixtures.makeAsset(id: "a", updatedAt: originalDate, placeName: "Paris, France")
+        ])
+
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .authorized)),
+            // Same id, but a later modificationDate — SyncPlanner re-upserts it.
+            fetcher: SerialFakeFetcher(results: [.success([snapshot("a", date: Date(timeIntervalSince1970: 2_000))])]),
+            geocoder: FailingGeocoder()
+        )
+
+        let result = try await ingestor.run()
+        #expect(result.upsertedCount == 1)
+
+        let stored = try await query.byDateRange(
+            start: Date(timeIntervalSince1970: 0),
+            end: Date(timeIntervalSince1970: 3_000)
+        )
+        #expect(stored.first(where: { $0.id == "a" })?.placeName == "Paris, France")
+    }
+
     @Test func fetchIsRetriedThenSucceeds() async throws {
         let (store, query) = try await TestDatabase.makeStoreAndQuery()
         let fetcher = SerialFakeFetcher(results: [
