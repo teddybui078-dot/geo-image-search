@@ -15,12 +15,15 @@ struct OSLogErrorSink: ErrorLogSink {
         logger = Logger(subsystem: subsystem, category: category)
     }
 
+    // Default OSLog privacy (not .public) — message embeds underlying
+    // framework error text and asset identifiers that shouldn't be
+    // extractable via log show/sysdiagnose by other processes on the device.
     func log(_ message: String, severity: ErrorSeverity) {
         switch severity {
         case .warning:
-            logger.notice("\(message, privacy: .public)")
+            logger.notice("\(message)")
         case .error:
-            logger.error("\(message, privacy: .public)")
+            logger.error("\(message)")
         }
     }
 }
