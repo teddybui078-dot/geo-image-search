@@ -35,7 +35,13 @@ let package = Package(
         .executableTarget(
             name: "GeoImageSearch",
             dependencies: ["CSQLite3", "CSQLiteVec"],
-            path: "Sources/GeoImageSearch"
+            path: "Sources/GeoImageSearch",
+            // The OpenGlobus HTML/JS/vendor bundle the globe WKWebView
+            // loads via Bundle.module — .copy (not .process) since these
+            // are pre-built files, not assets SPM should optimize/rewrite.
+            resources: [
+                .copy("Globe/Resources")
+            ]
         ),
         .testTarget(
             name: "GeoImageSearchTests",
