@@ -1,5 +1,4 @@
 import Testing
-import Foundation
 @testable import GeoImageSearch
 
 private final class SpyErrorLogSink: ErrorLogSink, @unchecked Sendable {

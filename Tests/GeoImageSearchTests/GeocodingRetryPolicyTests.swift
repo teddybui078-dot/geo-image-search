@@ -1,5 +1,4 @@
 import Testing
-import Foundation
 @testable import GeoImageSearch
 
 private struct FakeUnderlyingError: Error {}

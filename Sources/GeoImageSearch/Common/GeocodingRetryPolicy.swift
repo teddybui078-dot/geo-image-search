@@ -6,6 +6,8 @@ import Foundation
 // to actually clear instead of hammering it.
 struct GeocodingRetryPolicy: RetryPolicy {
     let maxAttempts: Int = 4
+    private let baseDelay: TimeInterval = 1.0
+    private let maxDelay: TimeInterval = 30.0
 
     func isRetryable(_ error: AppError) -> Bool {
         switch error {
@@ -17,6 +19,6 @@ struct GeocodingRetryPolicy: RetryPolicy {
     }
 
     func backoff(forAttempt attempt: Int) -> TimeInterval {
-        min(1.0 * pow(2.0, Double(attempt - 1)), 30.0)
+        min(baseDelay * pow(2.0, Double(attempt - 1)), maxDelay)
     }
 }

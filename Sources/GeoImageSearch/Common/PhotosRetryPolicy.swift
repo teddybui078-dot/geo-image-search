@@ -6,6 +6,8 @@ import Foundation
 // Settings), not something a retry can fix.
 struct PhotosRetryPolicy: RetryPolicy {
     let maxAttempts: Int = 3
+    private let baseDelay: TimeInterval = 0.5
+    private let maxDelay: TimeInterval = 4.0
 
     func isRetryable(_ error: AppError) -> Bool {
         switch error {
@@ -17,6 +19,6 @@ struct PhotosRetryPolicy: RetryPolicy {
     }
 
     func backoff(forAttempt attempt: Int) -> TimeInterval {
-        min(0.5 * pow(2.0, Double(attempt - 1)), 4.0)
+        min(baseDelay * pow(2.0, Double(attempt - 1)), maxDelay)
     }
 }

@@ -6,6 +6,8 @@ import Foundation
 // configuration problem — retrying never fixes it, so it's excluded.
 struct LLMRetryPolicy: RetryPolicy {
     let maxAttempts: Int = 5
+    private let baseDelay: TimeInterval = 2.0
+    private let maxDelay: TimeInterval = 60.0
 
     func isRetryable(_ error: AppError) -> Bool {
         switch error {
@@ -17,6 +19,6 @@ struct LLMRetryPolicy: RetryPolicy {
     }
 
     func backoff(forAttempt attempt: Int) -> TimeInterval {
-        min(2.0 * pow(2.0, Double(attempt - 1)), 60.0)
+        min(baseDelay * pow(2.0, Double(attempt - 1)), maxDelay)
     }
 }
