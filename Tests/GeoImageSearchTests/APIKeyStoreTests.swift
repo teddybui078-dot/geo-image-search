@@ -13,27 +13,27 @@ final class InMemoryKeyStore: SecureKeyStoring, @unchecked Sendable {
 
 struct StubValidator: APIKeyValidating {
     let result: APIKeyState
-    func validate(apiKey: String) async -> APIKeyState { result }
+    func validate(apiKey: String) async throws -> APIKeyState { result }
 }
 
 @Suite struct APIKeyManagerTests {
-    @Test func missingKeyReportsMissingWithoutValidating() async {
+    @Test func missingKeyReportsMissingWithoutValidating() async throws {
         let manager = APIKeyManager(store: InMemoryKeyStore(), validator: StubValidator(result: .valid))
-        #expect(await manager.currentState() == .missing)
+        #expect(try await manager.currentState() == .missing)
     }
 
     @Test func emptyStringKeyReportsMissing() async throws {
         let store = InMemoryKeyStore()
         try store.save("")
         let manager = APIKeyManager(store: store, validator: StubValidator(result: .valid))
-        #expect(await manager.currentState() == .missing)
+        #expect(try await manager.currentState() == .missing)
     }
 
     @Test func savedValidKeyReportsValid() async throws {
         let manager = APIKeyManager(store: InMemoryKeyStore(), validator: StubValidator(result: .valid))
         let state = try await manager.save("sk-test")
         #expect(state == .valid)
-        #expect(await manager.currentState() == .valid)
+        #expect(try await manager.currentState() == .valid)
     }
 
     @Test func savedInvalidKeyReportsInvalid() async throws {
@@ -53,7 +53,7 @@ struct StubValidator: APIKeyValidating {
         _ = try await manager.save("sk-test")
         try manager.clear()
         #expect(try store.read() == nil)
-        #expect(await manager.currentState() == .missing)
+        #expect(try await manager.currentState() == .missing)
     }
 
     @Test func rotatingKeyOverwritesPrevious() async throws {

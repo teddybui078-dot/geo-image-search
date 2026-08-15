@@ -90,8 +90,12 @@ enum APIKeyState: Equatable, Sendable {
     case quotaExhausted
 }
 
+// Throws rather than returning a state for genuine transport failures
+// (network down, timeout) — those are reported through the existing
+// AppError/ErrorReporting pipeline by the caller, not folded into
+// APIKeyState, which stays purely "is this key good."
 protocol APIKeyValidating: Sendable {
-    func validate(apiKey: String) async -> APIKeyState
+    func validate(apiKey: String) async throws -> APIKeyState
 }
 
 // Combines Keychain storage with live validation (a lightweight call through
@@ -105,15 +109,15 @@ final class APIKeyManager: Sendable {
         self.validator = validator
     }
 
-    func currentState() async -> APIKeyState {
+    func currentState() async throws -> APIKeyState {
         guard let key = try? store.read(), !key.isEmpty else { return .missing }
-        return await validator.validate(apiKey: key)
+        return try await validator.validate(apiKey: key)
     }
 
     @discardableResult
     func save(_ apiKey: String) async throws -> APIKeyState {
         try store.save(apiKey)
-        return await validator.validate(apiKey: apiKey)
+        return try await validator.validate(apiKey: apiKey)
     }
 
     func clear() throws {
