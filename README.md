@@ -15,7 +15,7 @@ Early development, being built across parallel feature branches.
 | 3D Interactive Map | `add-3dmap` | In progress |
 | Q&A AI Agent | `q-and-a-ai-agent` | In progress |
 | Embedding Pipeline | `embedding-pipeline` | In progress |
-| Error Handling | `error-handling` | In progress |
+| Error Handling | `error-handling` | ✅ Merged |
 
 ## Architecture
 
