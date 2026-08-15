@@ -68,6 +68,23 @@ import Foundation
         #expect(results.count == 2)
     }
 
+    @Test func allActiveIdentifiersIncludesNoGPSAndExcludesDeleted() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        let updatedAt = Date(timeIntervalSince1970: 1_700_000_123)
+        try await store.upsert([
+            PhotoAssetFixtures.makeAsset(id: "with-gps", updatedAt: updatedAt),
+            PhotoAssetFixtures.makeAsset(id: "no-gps", latitude: nil, longitude: nil, updatedAt: updatedAt),
+            PhotoAssetFixtures.makeAsset(id: "deleted")
+        ])
+        try await store.markDeleted(ids: ["deleted"])
+
+        let identifiers = try await query.allActiveIdentifiers()
+
+        #expect(Set(identifiers.keys) == ["with-gps", "no-gps"])
+        #expect(identifiers["with-gps"] == updatedAt)
+        #expect(identifiers["no-gps"] == updatedAt)
+    }
+
     // nonFiniteDatesDoNotCrash above proves NaN/+infinity don't crash the
     // process end-to-end through the DB, but never asserts the actual
     // clamped value and never exercises -infinity at all (the Int64.min

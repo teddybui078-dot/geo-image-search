@@ -21,6 +21,18 @@ struct SQLitePhotoQuery: PhotoQuery, Sendable {
         )
     }
 
+    // Added by photo-icloud-extraction (CONTRACT.md additive-change rule) —
+    // relaunch sync's diff needs every active identifier's updated_at
+    // regardless of GPS presence, which allActivePhotosWithLocation()
+    // deliberately excludes.
+    func allActiveIdentifiers() async throws -> [String: Date] {
+        let rows = try await connection.query(
+            "SELECT id, updated_at FROM photos WHERE deleted_at IS NULL",
+            map: { ($0.columnText(0), $0.columnInt64(1)) }
+        )
+        return Dictionary(uniqueKeysWithValues: rows.map { ($0.0, Date(timeIntervalSince1970: TimeInterval($0.1))) })
+    }
+
     // Deliberately does NOT filter on GPS presence — DESIGN.md Premise 7:
     // no-GPS photos stay date/semantic-searchable, only excluded from
     // globe pins (that's allActivePhotosWithLocation's job).

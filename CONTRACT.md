@@ -114,10 +114,23 @@ protocol PhotoQuery {
     func bySimilarity(embedding: [Float], limit: Int) async throws -> [PhotoAsset]
     func clusterTrips(minStopDuration: TimeInterval, maxTravelGap: TimeInterval) async throws -> [TripCluster]
     func allActivePhotosWithLocation() async throws -> [PhotoAsset]  // feeds the globe's initial pin load
+    func allActiveIdentifiers() async throws -> [String: Date]       // id -> updatedAt, GPS or not — feeds relaunch sync's diff
 }
 ```
 
-`add-3dmap` only needs `allActivePhotosWithLocation()` to build the initial globe view — it does not need the other three methods, and does not need to wait on `q-and-a-ai-agent`'s work.
+`add-3dmap` only needs `allActivePhotosWithLocation()` to build the initial globe view — it does not need the other methods, and does not need to wait on `q-and-a-ai-agent`'s work.
+
+**Additive change (`photo-icloud-extraction`):** `allActiveIdentifiers()` was added after this file's original four-method draft, per the "Changing the contract" rule for additive changes (new method, no coordination needed). Relaunch sync needs every active photo's stable id + last-known `updatedAt` to diff against a fresh library enumeration — including no-GPS photos, which `allActivePhotosWithLocation()` deliberately excludes. See "Relaunch sync strategy" below for how it's used.
+
+## Relaunch sync strategy (owned by `photo-icloud-extraction`)
+
+**Decided:** full library enumeration on every launch, diffed client-side against `allActiveIdentifiers()` — not Apple's `PHPersistentChangeToken` API, and not a separate "first launch only" code path.
+
+- `PHAsset.fetchAssets(with:)` is a lightweight, local, metadata-only call (no image bytes, no network) even at personal-library scale (~50k assets per DESIGN.md), so a full enumeration every launch is cheap — the "one-shot full ingest is expensive" concern doesn't actually apply to metadata.
+- `photos.updated_at` is populated from `PHAsset.modificationDate`, not "when our DB row last changed" — that's what makes it usable as the diff signal: an asset is upserted only if it's new (absent from `allActiveIdentifiers()`) or its `PHAsset.modificationDate` is newer than the stored `updatedAt`. Everything else is skipped (no re-geocoding, no re-write).
+- An id present in `allActiveIdentifiers()` but absent from the fresh enumeration is soft-deleted via `markDeleted`.
+- First launch falls out of the same code path for free: the stored identifier set is empty, so every enumerated asset is "new" — no separate one-shot-ingest branch needed.
+- `PHPersistentChangeToken`/`fetchPersistentChanges(since:)` would avoid the enumeration walk entirely, but was not used — its exact API shape couldn't be verified against real device/library state in this build environment, and the diff-against-`updated_at` approach is simpler to test and already cheap enough at this scale. Revisit if profiling on a real ~50k-photo library shows the enumeration itself is a bottleneck.
 
 ## Native \<-\> globe bridge (owned by `add-3dmap`)
 
