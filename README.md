@@ -1,16 +1,40 @@
-# Photo/iCloud Extraction
+# Geo Image Search
 
-Real macOS Photos/iCloud permission access via PhotosKit — no upload, no folder picker. This is the feature that makes the app's permission model real instead of simulated.
+A personal geographic memory engine for macOS. Grants real Photos/iCloud permission (no upload, no folder picker), plots your photos on a hand-styled interactive 3D globe, and answers natural-language questions about where you've been through an AI agent — "where did I go in Europe?", "find pictures from my trip to Greece."
 
-**Status: not started — skeleton only.**
+Personal project, solo builder, likely open-sourced once it's further along.
 
-## What this covers
+## Status
 
-- `PHPhotoLibrary.requestAuthorization` permission flow
-- Asset enumeration: `PHAsset.location` (GPS) + timestamp, no manual EXIF parsing needed
-- Asset identity model: `PHAsset.localIdentifier` as the stable ID, with `deleted_at`/`updated_at` tracking so relaunches can diff the library against a chosen sync strategy (one-shot full ingest vs. incremental diff)
-- Reverse geocoding via CLGeocoder — ~1km bucketed, cached, and throttled, since Apple's geocoder isn't built for high-volume bulk calls
-- Live Photos indexed as photos only, motion component ignored (v1)
-- iCloud-only assets: metadata/location pulled without forcing a full-resolution download
+Early development, being built across parallel feature branches.
 
-Writes everything through `PhotoStore` (implemented by `database-structure`, merged). See [CONTRACT.md](CONTRACT.md) for the exact `PhotoAsset` shape and write interface, and [TODOS.md](TODOS.md) item 6 for the GPS-coverage-validation and limited-Photos-access follow-ups this feature is expected to surface.
+| Feature | Branch | Status |
+|---|---|---|
+| Database Structure | `database-structure` | ✅ Merged |
+| Photo/iCloud Extraction | `photo-icloud-extraction` | In progress |
+| 3D Interactive Map | `add-3dmap` | In progress |
+| Q&A AI Agent | `q-and-a-ai-agent` | In progress |
+| Embedding Pipeline | `embedding-pipeline` | In progress |
+| Error Handling | `error-handling` | In progress |
+
+## Architecture
+
+Native Swift app. PhotosKit for real Photos/iCloud access, SQLite (with an R-Tree geospatial index and sqlite-vec for semantic search) for storage, an [OpenGlobus](https://github.com/openglobus/openglobus) globe rendered in an embedded `WKWebView`, and an OpenAI tool-calling agent that queries the indexed library and drives the globe.
+
+- [DESIGN.md](DESIGN.md) — full design history: the problem, the alternatives considered, the architecture decisions, and why each one was made
+- [CONTRACT.md](CONTRACT.md) — the locked interfaces (shared types, database schema, protocols) every feature branch builds against, so they can be developed in parallel worktrees without blocking on each other
+- [TODOS.md](TODOS.md) — the build breakdown by subsystem, plus deferred/lower-priority items
+
+## Build
+
+```bash
+swift build      # build the package
+swift run        # run the app
+swift test       # run the test suite
+```
+
+Full build commands, module layout, and the parallel-worktree workflow: [CLAUDE.md](CLAUDE.md)
+
+## License
+
+See [LICENSE](LICENSE).
