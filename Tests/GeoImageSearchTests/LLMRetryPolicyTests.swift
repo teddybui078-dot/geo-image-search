@@ -1,5 +1,4 @@
 import Testing
-import Foundation
 @testable import GeoImageSearch
 
 @Suite struct LLMRetryPolicyTests {
