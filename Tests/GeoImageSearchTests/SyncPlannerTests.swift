@@ -46,6 +46,21 @@ import Foundation
         #expect(plan.toUpsert.map(\.localIdentifier) == ["a"])
     }
 
+    // Regression: `updated_at` is stored as a whole-second SQLite INTEGER
+    // (DateConversion.unixSecondsClamped truncates), but PHAsset.modificationDate
+    // almost always carries fractional seconds. storedIdentifiers here is
+    // exactly what allActiveIdentifiers() returns after that round trip —
+    // fractional seconds must not make an untouched asset look "changed".
+    @Test func subSecondModificationDateDoesNotLookChangedAfterStoreRoundTrip() {
+        let modifiedAt = Date(timeIntervalSince1970: 1000.789)
+        let roundTrippedStoredValue = Date(timeIntervalSince1970: TimeInterval(modifiedAt.unixSecondsClamped))
+        let library = [snapshot("a", modificationDate: modifiedAt)]
+
+        let plan = SyncPlanner.plan(librarySnapshots: library, storedIdentifiers: ["a": roundTrippedStoredValue], now: .now)
+
+        #expect(plan.toUpsert.isEmpty)
+    }
+
     @Test func missingFromLibraryIsMarkedDeleted() {
         let plan = SyncPlanner.plan(
             librarySnapshots: [],

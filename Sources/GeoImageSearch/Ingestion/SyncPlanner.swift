@@ -25,11 +25,18 @@ enum SyncPlanner {
             guard let storedUpdatedAt = storedIdentifiers[snapshot.localIdentifier] else {
                 return true // absent from the store — new asset
             }
-            // Strict `>`, not `>=`: an asset whose modificationDate exactly
-            // matches what's already stored is unchanged since the last
-            // sync — skipping it avoids a redundant write (and, once
-            // geocoding is wired in ahead of it, a redundant CLGeocoder call).
-            return snapshot.effectiveUpdatedAt(now: now) > storedUpdatedAt
+            // Compare at whole-second precision via unixSecondsClamped, not
+            // as raw Dates: `updated_at` is stored as a SQLite INTEGER
+            // (DateConversion.unixSecondsClamped truncates fractional
+            // seconds on write), so storedUpdatedAt always lands on a whole
+            // second. PHAsset.modificationDate almost always carries
+            // fractional seconds — comparing it untruncated against a
+            // truncated stored value with strict `>` was true on nearly
+            // every asset, every run, silently turning "incremental diff"
+            // back into "re-upsert (and re-geocode) everything every
+            // relaunch." Truncating both sides the same way is what makes
+            // "unchanged since last sync" actually mean unchanged.
+            return snapshot.effectiveUpdatedAt(now: now).unixSecondsClamped > storedUpdatedAt.unixSecondsClamped
         }
 
         // Stored but missing from the fresh enumeration — the library no
