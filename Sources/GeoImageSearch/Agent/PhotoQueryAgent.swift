@@ -2,7 +2,8 @@ import Foundation
 
 struct AgentTurnResult: Sendable {
     let responseText: String
-    let assets: [PhotoAsset] // aggregated across every tool call this turn, deduped — for GlobeUpdating
+    let assets: [PhotoAsset]           // aggregated across every tool call this turn, deduped — for GlobeUpdating
+    let updatedMessages: [LLMMessage]  // full conversation including this turn — pass back in as the next call's priorMessages to keep multi-turn memory
 }
 
 enum AgentLoopError: Error {
@@ -42,7 +43,8 @@ final class PhotoQueryAgent: Sendable {
             let turn = try await llmClient.send(messages: messages, tools: ToolSchemas.all)
             switch turn {
             case .message(let text):
-                return AgentTurnResult(responseText: text, assets: aggregatedAssets)
+                messages.append(.assistant(content: text, toolCalls: nil))
+                return AgentTurnResult(responseText: text, assets: aggregatedAssets, updatedMessages: messages)
             case .toolCalls(let calls):
                 messages.append(.assistant(content: nil, toolCalls: calls))
                 for call in calls {

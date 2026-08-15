@@ -116,6 +116,26 @@ private struct AlwaysOriginPlaceNameResolver: PlaceNameResolving {
         }
     }
 
+    @Test func updatedMessagesCanBePassedBackInForMultiTurnMemory() async throws {
+        let (_, query) = try await TestDatabase.makeStoreAndQuery()
+        let executor = ToolExecutor(photoQuery: query, placeNameResolver: AlwaysOriginPlaceNameResolver())
+        let client = ScriptedLLMClient(script: [.message("First answer."), .message("Second answer.")])
+        let agent = PhotoQueryAgent(llmClient: client, toolExecutor: executor)
+
+        let first = try await agent.ask("first question")
+        // First call carries only [system, user] — no prior turns yet.
+        #expect(client.receivedMessages[0].count == 2)
+
+        _ = try await agent.ask("second question", priorMessages: first.updatedMessages)
+
+        // Second call's conversation includes the first Q&A plus the new
+        // question — proves updatedMessages actually round-trips as memory.
+        let secondCallMessages = client.receivedMessages[1]
+        #expect(secondCallMessages.contains { $0.role == .user && $0.content == "first question" })
+        #expect(secondCallMessages.contains { $0.role == .assistant && $0.content == "First answer." })
+        #expect(secondCallMessages.contains { $0.role == .user && $0.content == "second question" })
+    }
+
     @Test func systemMessageGroundsRelativeDatesInProvidedCurrentDate() async throws {
         let (_, query) = try await TestDatabase.makeStoreAndQuery()
         let executor = ToolExecutor(photoQuery: query, placeNameResolver: AlwaysOriginPlaceNameResolver())
