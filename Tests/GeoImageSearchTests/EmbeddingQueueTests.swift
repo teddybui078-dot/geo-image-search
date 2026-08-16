@@ -16,6 +16,7 @@ private struct FakePhotoQuery: PhotoQuery, Sendable {
     func bySimilarity(embedding: [Float], limit: Int) async throws -> [PhotoAsset] { [] }
     func clusterTrips(minStopDuration: TimeInterval, maxTravelGap: TimeInterval) async throws -> [TripCluster] { [] }
     func allActivePhotosWithLocation() async throws -> [PhotoAsset] { [] }
+    func allActiveIdentifiers() async throws -> [String: StoredPhotoIdentity] { [:] }
     func embeddedAssetIDs(modelVersion: String) async throws -> Set<String> { embedded }
 }
 
