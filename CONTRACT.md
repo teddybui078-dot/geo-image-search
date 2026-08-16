@@ -12,8 +12,8 @@ Feature areas map 1:1 to `TODOS.md`'s Build Breakdown and to suggested branch na
 | Database Structure | `database-structure` | **✅ Merged (PR #1)** | Implements `PhotoStore` and `PhotoQuery`, owns the SQL schema |
 | 3D Interactive Map | `add-3dmap` | **Bridge, pin rendering, LOD clustering, and fallback UI done; visual confirmation of the country-polygon fill still open (see PR #7)** | The `WebViewBridge` message protocol, globe rendering |
 | Q&A AI Agent | `q-and-a-ai-agent` | Not started | Agent tool schemas, calls `PhotoQuery` |
-| Embedding Pipeline | `embedding-pipeline` | Not started | Produces `EmbeddingRecord`, writes through `PhotoStore` |
-| Error Handling | `error-handling` | In progress | `AppError`, `RetryPolicy`, `ErrorReporting`, `RetryExecutor` — everyone else imports this |
+| Embedding Pipeline | `embedding-pipeline` | In progress | Produces `EmbeddingRecord`, writes through `PhotoStore` |
+| Error Handling | `error-handling` | **✅ Merged (PR #2)** | `AppError`, `RetryPolicy`, `ErrorReporting`, `RetryExecutor` — everyone else imports this |
 
 `database-structure` is real now — `PhotoStore`/`PhotoQuery` are implemented against actual SQLite in `Sources/GeoImageSearch/Storage/`. Every other feature should build against the real thing, not a mock, from here on.
 
@@ -34,8 +34,8 @@ struct PhotoAsset: Identifiable, Codable {
 
 struct EmbeddingRecord: Codable {
     let assetID: String         // PhotoAsset.id
-    let vector: [Float]         // dimension TBD — see "Open dependency" below
-    let modelVersion: String    // e.g. "mobileclip-s0-v1" — lets you re-embed if the model changes
+    let vector: [Float]         // 512 dims — see "Model choice, resolved" below
+    let modelVersion: String    // "mobileclip-s2-v1" — lets you re-embed if the model changes
     let generatedAt: Date
 }
 
@@ -50,7 +50,9 @@ struct TripCluster: Codable {
 }
 ```
 
-**Open dependency, resolved:** `EmbeddingRecord.vector`'s dimension depends on the CoreML model choice (TODOS.md item 5, still not decided). Rather than guessing a number, `database-structure` made the dimension a runtime parameter to `Schema.create(in:embeddingDimension:)` — so `embedding-pipeline` passes its actual model's dimension when it sets up storage, no schema coordination or migration needed once the model is picked. This is the pattern to reach for generally when one feature's shape depends on another's not-yet-made decision: parameterize instead of guessing a placeholder value.
+**Open dependency, resolved:** `EmbeddingRecord.vector`'s dimension depends on the CoreML model choice (TODOS.md item 5 — see "Model choice, resolved" immediately below). Rather than guessing a number, `database-structure` made the dimension a runtime parameter to `Schema.create(in:embeddingDimension:)` — so `embedding-pipeline` passes its actual model's dimension when it sets up storage, no schema coordination or migration needed once the model is picked. This is the pattern to reach for generally when one feature's shape depends on another's not-yet-made decision: parameterize instead of guessing a placeholder value.
+
+**Model choice, resolved:** `embedding-pipeline` picked **MobileCLIP-S2** (CoreML export from `apple/coreml-mobileclip`) — **embedding dimension 512**, `EmbeddingRecord.modelVersion = "mobileclip-s2-v1"`. Chosen over SigLIP 2 (Apache-2.0, unambiguous, but 768-dim and needs re-conversion to hit this project's macOS 14 floor) — accepted MobileCLIP's license ambiguity (the CoreML export repo's declared license points at a file Apple deleted when it relicensed the underlying weights research-only in August 2025) in exchange for ready-made CoreML exports and no conversion work. Mitigation: the `.mlpackage` weight files are never committed to this MIT-licensed repo — downloaded at first run into Application Support, see the embedding-pipeline README for the full note. `Schema.create` is called with `embeddingDimension: 512`.
 
 ## Database schema (owned by `database-structure`, written to by `photo-icloud-extraction` and `embedding-pipeline`)
 
@@ -120,12 +122,15 @@ protocol PhotoQuery {
     func clusterTrips(minStopDuration: TimeInterval, maxTravelGap: TimeInterval) async throws -> [TripCluster]
     func allActivePhotosWithLocation() async throws -> [PhotoAsset]                    // feeds the globe's initial pin load
     func allActiveIdentifiers() async throws -> [String: StoredPhotoIdentity]          // id -> (updatedAt, placeName), GPS or not — feeds relaunch sync's diff
+    func embeddedAssetIDs(modelVersion: String) async throws -> Set<String>            // additive, see note below
 }
 ```
 
 `add-3dmap` only needs `allActivePhotosWithLocation()` to build the initial globe view — it does not need the other methods, and does not need to wait on `q-and-a-ai-agent`'s work.
 
 **Additive change (`photo-icloud-extraction`):** `allActiveIdentifiers()` was added after this file's original four-method draft, per the "Changing the contract" rule for additive changes (new method, no coordination needed). Relaunch sync needs every active photo's stable id + last-known `updatedAt` to diff against a fresh library enumeration — including no-GPS photos, which `allActivePhotosWithLocation()` deliberately excludes. `placeName` was added to the return value in adversarial review (Codex): a re-upserted photo whose geocode call fails needs its previously-resolved place name to fall back on, or a transient CLGeocoder failure silently erases previously-good data. See "Relaunch sync strategy" below for how it's used.
+
+**Additive method, added by `embedding-pipeline`:** `embeddedAssetIDs(modelVersion:)` lets a re-run of the embedding pipeline skip assets already embedded at the current model version instead of re-embedding the whole library every time. Ships with a default-empty protocol extension (`{ [] }`), so it's non-breaking for any other conformer — degrades to "nothing considered already embedded" rather than failing to compile or behave incorrectly.
 
 ## Relaunch sync strategy (owned by `photo-icloud-extraction`)
 
@@ -254,7 +259,7 @@ Per `/plan-eng-review`: one shared `ErrorReporting` surface (consistent UI prese
 
 ## Parallelization guide
 
-**Merged to `main`:** `AppError`/`RetryPolicy`/`ErrorReporting`/`RetryExecutor` are implemented against the shapes above (PR #2). `photo-icloud-extraction` already builds against the real thing (`PhotosRetryPolicy`, `GeocodingRetryPolicy`) — `add-3dmap`, `embedding-pipeline`, and `q-and-a-ai-agent` should too now, no more local placeholder error types needed.
+**`error-handling` is merged (PR #2):** `AppError`/`RetryPolicy`/`ErrorReporting`/`RetryExecutor` are implemented against the shapes above in `Sources/GeoImageSearch/Common/`. `photo-icloud-extraction` and `embedding-pipeline` already build against the real thing (`PhotosRetryPolicy`/`GeocodingRetryPolicy` and `EmbeddingRetryPolicy` respectively) — `add-3dmap` and `q-and-a-ai-agent` should too now, no more local placeholder error types needed.
 
 **Unblocked now that `database-structure` is merged:** `photo-icloud-extraction`, `add-3dmap`, and `embedding-pipeline` should build against the real `PhotoStore`/`PhotoQuery` (`Sources/GeoImageSearch/Storage/`) directly — no more mocking needed for those.
 

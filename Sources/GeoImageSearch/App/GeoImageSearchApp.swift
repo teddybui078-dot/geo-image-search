@@ -79,13 +79,12 @@ struct ContentView: View {
             let directory = try AppPaths.photoDatabaseDirectory()
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let path = directory.appendingPathComponent("library.sqlite").path
-            // embedding-pipeline hasn't picked a CoreML model/dimension yet
-            // (CONTRACT.md's open dependency, TODOS.md item 5) — neither
-            // add-3dmap (reads allActivePhotosWithLocation()) nor ingestion
-            // touches photo_embeddings, so any positive placeholder is
-            // enough to open storage. Swap for the real dimension once
-            // embedding-pipeline lands.
-            let (store, query) = try await SQLiteDatabase.open(atPath: path, embeddingDimension: placeholderEmbeddingDimension)
+            // 512 is the real MobileCLIP-S2 embedding dimension now (TODOS.md
+            // item 5, CONTRACT.md's "Model choice, resolved"), not a
+            // placeholder — neither add-3dmap (reads
+            // allActivePhotosWithLocation()) nor ingestion touches
+            // photo_embeddings themselves, that's embedding-pipeline's job.
+            let (store, query) = try await SQLiteDatabase.open(atPath: path, embeddingDimension: EmbeddingModelInfo.embeddingDimension)
             photoStore = store
             photoQuery = query
         } catch {
@@ -111,8 +110,6 @@ struct ContentView: View {
         }
     }
 }
-
-private let placeholderEmbeddingDimension = 512
 
 enum AppPaths {
     static func photoDatabaseDirectory() throws -> URL {
