@@ -423,6 +423,33 @@ import Foundation
             Issue.record("expected failed phase, got \(progress.phase)")
         }
     }
+
+    // Gap found in coverage audit: `batchSize` is an injectable initializer
+    // parameter (default 200) specifically so the `stride(from:to:by:)`
+    // upsert loop can be exercised across multiple batches under test, but
+    // every existing test either passes 2 or fewer assets or relies on the
+    // 200 default — so the loop has never actually iterated more than once.
+    // A batching bug (e.g. an off-by-one in `end`, or dropping/double
+    // counting a boundary asset) would pass every existing test.
+    @Test @MainActor func multiBatchUpsertProcessesAllAssetsAcrossBatchBoundaries() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        let snapshots = (1...5).map { snapshot("id-\($0)") }
+        let progress = SyncProgress()
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .authorized)),
+            fetcher: SerialFakeFetcher(results: [.success(snapshots)]),
+            geocoder: FakeReverseGeocoder(placeNamesByCoordinate: [:]),
+            batchSize: 2
+        )
+
+        let result = try await ingestor.run(progress: progress)
+
+        #expect(result.upsertedCount == 5)
+        let identifiers = try await query.allActiveIdentifiers()
+        #expect(Set(identifiers.keys) == Set(snapshots.map(\.localIdentifier)))
+        #expect(progress.phase == .finished(result))
+    }
 }
 
 private struct TestError: Error {}
