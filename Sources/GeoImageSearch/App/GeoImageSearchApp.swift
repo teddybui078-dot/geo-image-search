@@ -9,32 +9,59 @@ struct GeoImageSearchApp: App {
     }
 }
 
-// Bootstraps local storage, then hosts the globe (or its fallback). Storage
-// open failures aren't modeled by AppError — CONTRACT.md's enum covers
-// PhotosKit/CLGeocoder/LLM/webview failures, not local storage bootstrap —
-// so this is a plain error state rather than a forced-fit AppError case.
+// Bootstraps local storage, then hosts a sync trigger (photo-icloud-extraction)
+// above the globe (or its fallback). Storage open failures aren't modeled by
+// AppError — CONTRACT.md's enum covers PhotosKit/CLGeocoder/LLM/webview
+// failures, not local storage bootstrap — so this is a plain error state
+// rather than a forced-fit AppError case.
 struct ContentView: View {
     private let errorReporter: any ErrorReporting = ErrorReporter()
 
+    @State private var photoStore: (any PhotoStore & Sendable)?
     @State private var photoQuery: (any PhotoQuery & Sendable)?
     @State private var storageError: String?
     @State private var loadFailed = false
     @State private var retryToken = 0
+
+    @State private var syncStatus = "Not synced yet."
+    @State private var isSyncing = false
 
     var body: some View {
         Group {
             if let storageError {
                 Text("Couldn't open local storage: \(storageError)")
                     .padding()
-            } else if let photoQuery {
-                if loadFailed {
-                    GlobeFallbackView(onRetry: {
-                        loadFailed = false
-                        retryToken += 1
-                    })
-                } else {
-                    GlobeView(photoQuery: photoQuery, errorReporter: errorReporter, loadFailed: $loadFailed)
-                        .id(retryToken)
+            } else if let photoStore, let photoQuery {
+                VStack(spacing: 0) {
+                    HStack {
+                        Text(syncStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                        Spacer()
+                        // Manual trigger for TODOS.md item 6: validate real
+                        // GPS coverage % against the user's own library. No
+                        // polished UI yet — this exists so that number can
+                        // actually be measured by running the app (via
+                        // Xcode, not `swift run`/`swift test`, neither of
+                        // which carries the Photos entitlement) against a
+                        // real library.
+                        Button(isSyncing ? "Syncing…" : "Sync Photo Library") {
+                            Task { await runIngestion(store: photoStore, query: photoQuery) }
+                        }
+                        .disabled(isSyncing)
+                    }
+                    .padding(8)
+
+                    if loadFailed {
+                        GlobeFallbackView(onRetry: {
+                            loadFailed = false
+                            retryToken += 1
+                        })
+                    } else {
+                        GlobeView(photoQuery: photoQuery, errorReporter: errorReporter, loadFailed: $loadFailed)
+                            .id(retryToken)
+                    }
                 }
             } else {
                 ProgressView("Opening your library…")
@@ -51,17 +78,36 @@ struct ContentView: View {
         do {
             let directory = try AppPaths.photoDatabaseDirectory()
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let path = directory.appendingPathComponent("photos.sqlite").path
+            let path = directory.appendingPathComponent("library.sqlite").path
             // embedding-pipeline hasn't picked a CoreML model/dimension yet
-            // (CONTRACT.md's open dependency, TODOS.md item 5) — add-3dmap
-            // only reads allActivePhotosWithLocation(), which never touches
-            // photo_embeddings, so any positive placeholder is enough to
-            // open storage. Swap for the real dimension once
+            // (CONTRACT.md's open dependency, TODOS.md item 5) — neither
+            // add-3dmap (reads allActivePhotosWithLocation()) nor ingestion
+            // touches photo_embeddings, so any positive placeholder is
+            // enough to open storage. Swap for the real dimension once
             // embedding-pipeline lands.
-            let (_, query) = try await SQLiteDatabase.open(atPath: path, embeddingDimension: placeholderEmbeddingDimension)
+            let (store, query) = try await SQLiteDatabase.open(atPath: path, embeddingDimension: placeholderEmbeddingDimension)
+            photoStore = store
             photoQuery = query
         } catch {
             storageError = error.localizedDescription
+        }
+    }
+
+    private func runIngestion(store: any PhotoStore & Sendable, query: any PhotoQuery & Sendable) async {
+        isSyncing = true
+        defer { isSyncing = false }
+        do {
+            let result = try await PhotoLibraryIngestor(store: store, query: query, errorReporter: errorReporter).run()
+            syncStatus = """
+            Synced \(result.totalLibraryAssets) photos — \(result.upsertedCount) written, \(result.deletedCount) removed. \
+            GPS coverage: \(String(format: "%.1f", result.gpsCoverage.coveragePercent))% (\(result.gpsCoverage.assetsWithGPS)/\(result.gpsCoverage.totalAssets))\
+            \(result.isLimitedAccess ? " — ⚠️ limited Photos access, only a subset of the library is visible." : "")
+            """
+            // Reloads GlobeView so it re-fetches allActivePhotosWithLocation()
+            // and picks up whatever this sync just wrote.
+            retryToken += 1
+        } catch {
+            syncStatus = "Sync failed: \(error)"
         }
     }
 }

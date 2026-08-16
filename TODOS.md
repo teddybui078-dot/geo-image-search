@@ -5,15 +5,16 @@
 What actually needs to be built, organized by subsystem. Cross-references DESIGN.md's Next Steps and the deferred items below.
 
 ### 1. Photo/iCloud Extraction
-- PhotosKit permission request flow (native Swift, `PHPhotoLibrary.requestAuthorization`)
-- Asset enumeration: list `PHAsset`s, pull GPS (`PHAsset.location`) + timestamp — no manual EXIF parsing needed
-- Asset identity model: `PHAsset.localIdentifier` as the stable ID, `deleted_at`/`updated_at` tracking so relaunches can diff the library
-- Relaunch sync strategy: one-shot full ingest vs. incremental diff — decide alongside the identity model, same decision
-- Reverse geocoding: CLGeocoder, ~1km bucketed + cached + throttled (lat/lon → place name)
-- Live Photos handled as photos (image component only, motion ignored)
-- iCloud-only assets: pull metadata/location without forcing a full-res download; defer full-res fetch to on-demand thumbnailing
-- Validate real GPS coverage % against your own library early (see item 6 below)
-- "Selected Photos" limited-access handling — currently deferred, flagged as a family-usability risk (see item 6 below)
+**Done (`photo-icloud-extraction` branch):** built against the real `PhotoStore`/`PhotoQuery` and `AppError`/`RetryPolicy`/`ErrorReporting` from the now-merged `database-structure` and `error-handling` branches.
+- ~~PhotosKit permission request flow (native Swift, `PHPhotoLibrary.requestAuthorization`)~~ **Done** — `PhotosPermissionManager`/`PhotosAccessStatus`, behind a `PhotosAuthorizing` seam for testing.
+- ~~Asset enumeration: list `PHAsset`s, pull GPS (`PHAsset.location`) + timestamp — no manual EXIF parsing needed~~ **Done** — `PHPhotoLibraryFetcher`, mapped through `PhotoLibraryAsset`/`PhotoAssetSnapshot`.
+- ~~Asset identity model: `PHAsset.localIdentifier` as the stable ID, `deleted_at`/`updated_at` tracking so relaunches can diff the library~~ **Done** — no separate identity type needed; the fields live on `PhotoAsset` itself.
+- ~~Relaunch sync strategy: one-shot full ingest vs. incremental diff~~ **Done** — full (cheap, metadata-only) enumeration every launch, diffed client-side via `SyncPlanner` against the new `PhotoQuery.allActiveIdentifiers()`, using `PHAsset.modificationDate` as the change signal. First launch falls out of the same path for free. Full reasoning: CONTRACT.md's "Relaunch sync strategy".
+- ~~Reverse geocoding: CLGeocoder, ~1km bucketed + cached + throttled (lat/lon → place name)~~ **Done** — `ReverseGeocoder`/`GeoBucket`, retried via the shared `RetryExecutor` + `GeocodingRetryPolicy`. Cache is process-lifetime only (see CONTRACT.md/code comments for why that's sufficient).
+- ~~Live Photos handled as photos (image component only, motion ignored)~~ **Done** — `PhotoAssetSnapshot.isLivePhoto` via `mediaSubtypes.contains(.photoLive)`.
+- iCloud-only assets: pull metadata/location without forcing a full-res download — **already true by construction**: `PHAsset` metadata (location/dates) is locally available regardless of iCloud-only status; this feature never touches image bytes, so there was no full-res fetch to defer.
+- ~~Validate real GPS coverage % against your own library early~~ **Mechanism done, real number not yet measured** — `GPSCoverageReport` is computed on every sync and surfaced in the app's "Sync Photo Library" button. Couldn't be run in this build environment: `swift build`/`swift test` don't carry the Photos entitlement, only a full Xcode build does. Run it from Xcode against a real library to get the actual percentage.
+- "Selected Photos" limited-access handling — **the data-safety half is fixed; the UX half is still a known gap.** Found in adversarial review: relaunch sync originally treated a stored photo missing from a limited fetch as deleted, silently soft-deleting everything outside the current selection the moment access was downgraded — fixed, deletions are now skipped entirely while access is limited (CONTRACT.md's "Relaunch sync strategy"). `PhotosAccessStatus.isLimitedAccess`/`IngestResult.isLimitedAccess` detect and surface the state (the app shows a warning), but there's still no prompt or explanation UI beyond that, per DESIGN.md's Constraints and item 6 below.
 
 ### 2. Database Structure
 **Done (`database-structure` branch):** `PhotoStore`/`PhotoQuery` are implemented against real SQLite, matching CONTRACT.md's schema section.
@@ -145,3 +146,5 @@ Surfaced during `/plan-eng-review` (2026-08-09), sourced from the Codex outside-
 **Context:** Check real GPS coverage % against your own library as part of Next Step 1 validation. Treat limited-access handling as a pre-family-use requirement, not something fully deferred.
 
 **Depends on / blocked by:** Next Step 1 (PhotosKit permission flow) must exist to measure this.
+
+**Status (photo-icloud-extraction branch):** the measurement mechanism exists (`GPSCoverageReport`, surfaced via the app's "Sync Photo Library" button) but hasn't been run against a real library yet — this build environment can't grant Photos access (`swift build`/`swift test` lack the entitlement a full Xcode build applies). Limited-access is detected and surfaced (`PhotosAccessStatus.isLimitedAccess` → a warning in the synced result), and the destructive side (silently soft-deleting photos outside the current selection) is fixed — but there's still no dedicated prompt/explanation UI, a real gap, not a solved one. Both the coverage number and the UI need a real Mac with a real library and an Xcode build to close out.
