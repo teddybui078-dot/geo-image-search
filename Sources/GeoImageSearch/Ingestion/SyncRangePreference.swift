@@ -57,19 +57,23 @@ protocol SyncRangePreferenceStoring: Sendable {
 // UserDefaults is thread-safe (Apple's documented guarantee) but predates
 // Sendable — same @unchecked rationale as UserDefaultsOnboardingProgressStore.
 final class UserDefaultsSyncRangePreferenceStore: SyncRangePreferenceStoring, @unchecked Sendable {
+    // Internal (not private) so tests simulating a stale/renamed stored
+    // value reference this constant instead of duplicating the literal —
+    // a rename then forces the test to keep testing the real key.
+    static let storageKey = "com.geoimagesearch.selectedSyncDateRange"
+
     private let defaults: UserDefaults
-    private let key = "com.geoimagesearch.selectedSyncDateRange"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
     }
 
     func selectedRange() -> SyncDateRangeOption? {
-        guard let rawValue = defaults.string(forKey: key) else { return nil }
+        guard let rawValue = defaults.string(forKey: Self.storageKey) else { return nil }
         return SyncDateRangeOption(rawValue: rawValue)
     }
 
     func setSelectedRange(_ option: SyncDateRangeOption) {
-        defaults.set(option.rawValue, forKey: key)
+        defaults.set(option.rawValue, forKey: Self.storageKey)
     }
 }

@@ -314,6 +314,61 @@ import Foundation
         let identifiers = try await query.allActiveIdentifiers()
         #expect(Set(identifiers.keys) == ["recent"])
     }
+
+    // Found in pre-landing review (testing specialist): the fetch-failure
+    // catch branch's progress?.fail(...) call was untested — every existing
+    // fetch-failure test (fetchIsRetriedThenSucceeds) only covers the
+    // eventual-success path, none exhaust every retry attempt with a
+    // progress reporter attached.
+    @Test @MainActor func fetchFailureExhaustingRetriesSetsFailedProgress() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        let progress = SyncProgress()
+        let fetcher = SerialFakeFetcher(results: [
+            .failure(AppError.photosFetchFailed(underlying: TestError())),
+            .failure(AppError.photosFetchFailed(underlying: TestError())),
+            .failure(AppError.photosFetchFailed(underlying: TestError()))
+        ])
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .authorized)),
+            fetcher: fetcher,
+            geocoder: FakeReverseGeocoder(placeNamesByCoordinate: [:])
+        )
+
+        var thrownError: Error?
+        do {
+            _ = try await ingestor.run(progress: progress)
+        } catch {
+            thrownError = error
+        }
+        #expect(thrownError is AppError)
+        if case .failed = progress.phase {} else {
+            Issue.record("expected failed phase, got \(progress.phase)")
+        }
+    }
+
+    // Found in pre-landing review (testing specialist): a re-sync where
+    // nothing changed (plan.toUpsert is empty) drives progress through
+    // start(total: 0) — SyncProgressView's max(total, 1) guard implies this
+    // is an expected real case, but no test asserted it reaches .finished
+    // cleanly rather than getting stuck or reporting a bogus count.
+    @Test @MainActor func progressWithNothingToUpsertReachesFinishedDirectly() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        let unchangedDate = Date(timeIntervalSince1970: 1_000)
+        try await store.upsert([PhotoAssetFixtures.makeAsset(id: "unchanged", updatedAt: unchangedDate)])
+        let progress = SyncProgress()
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .authorized)),
+            fetcher: SerialFakeFetcher(results: [.success([snapshot("unchanged", date: unchangedDate)])]),
+            geocoder: FakeReverseGeocoder(placeNamesByCoordinate: [:])
+        )
+
+        let result = try await ingestor.run(progress: progress)
+
+        #expect(result.upsertedCount == 0)
+        #expect(progress.phase == .finished(result))
+    }
 }
 
 private struct TestError: Error {}

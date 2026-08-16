@@ -39,10 +39,16 @@ import Foundation
 // pattern as AgentPreferencesTests.
 @Suite("UserDefaultsSyncRangePreferenceStore", .serialized)
 struct UserDefaultsSyncRangePreferenceStoreTests {
+    private let suiteName = "com.geoimagesearch.tests.syncRange"
+
+    private func clearedDefaults() -> UserDefaults {
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return defaults
+    }
+
     private func makeStore() -> UserDefaultsSyncRangePreferenceStore {
-        let defaults = UserDefaults(suiteName: "com.geoimagesearch.tests.syncRange")!
-        defaults.removePersistentDomain(forName: "com.geoimagesearch.tests.syncRange")
-        return UserDefaultsSyncRangePreferenceStore(defaults: defaults)
+        UserDefaultsSyncRangePreferenceStore(defaults: clearedDefaults())
     }
 
     @Test("no range chosen yet returns nil")
@@ -67,10 +73,8 @@ struct UserDefaultsSyncRangePreferenceStoreTests {
     // silently pick a default.
     @Test("unrecognized stored raw value decodes to nil")
     func returnsNilForUnrecognizedStoredValue() {
-        let suiteName = "com.geoimagesearch.tests.syncRange"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defaults.removePersistentDomain(forName: suiteName)
-        defaults.set("legacyRemovedCase", forKey: "com.geoimagesearch.selectedSyncDateRange")
+        let defaults = clearedDefaults()
+        defaults.set("legacyRemovedCase", forKey: UserDefaultsSyncRangePreferenceStore.storageKey)
         let store = UserDefaultsSyncRangePreferenceStore(defaults: defaults)
 
         #expect(store.selectedRange() == nil)
