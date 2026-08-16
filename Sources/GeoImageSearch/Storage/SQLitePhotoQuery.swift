@@ -188,4 +188,12 @@ struct SQLitePhotoQuery: PhotoQuery, Sendable {
             )
         }
     }
+
+    func embeddedAssetIDs(modelVersion: String) async throws -> Set<String> {
+        Set(try await connection.query(
+            "SELECT asset_id FROM photo_embedding_meta WHERE model_version = ?",
+            bind: { try $0.bind(modelVersion, at: 1) },
+            map: { $0.columnText(0) }
+        ))
+    }
 }
