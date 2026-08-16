@@ -22,6 +22,12 @@ struct PhotosAccessStatus: Sendable, Equatable {
 // PhotoLibraryIngestor depends on this protocol; tests inject a fake.
 protocol PhotosAuthorizing: Sendable {
     func requestAccess() async -> PhotosAccessStatus
+
+    // Onboarding needs to know whether Photos access is already granted on
+    // every launch without triggering the system prompt each time —
+    // requestAccess() always prompts on .notDetermined, which would fire
+    // before the user has even seen the onboarding explanation.
+    func currentStatus() -> PhotosAccessStatus
 }
 
 // Next Step 1 — request Photos/iCloud access. `.readWrite` (not `.readOnly`)
@@ -32,5 +38,9 @@ final class PhotosPermissionManager: PhotosAuthorizing, Sendable {
     func requestAccess() async -> PhotosAccessStatus {
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         return PhotosAccessStatus(authorizationStatus: status)
+    }
+
+    func currentStatus() -> PhotosAccessStatus {
+        PhotosAccessStatus(authorizationStatus: PHPhotoLibrary.authorizationStatus(for: .readWrite))
     }
 }

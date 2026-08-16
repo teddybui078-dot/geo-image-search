@@ -4,6 +4,7 @@ import Photos
 struct FakePhotosAuthorizing: PhotosAuthorizing {
     let status: PhotosAccessStatus
     func requestAccess() async -> PhotosAccessStatus { status }
+    func currentStatus() -> PhotosAccessStatus { status }
 }
 
 // fetchAllPhotoAssetSnapshots() is a synchronous `throws` requirement (not

@@ -9,14 +9,21 @@ struct GeoImageSearchApp: App {
     }
 }
 
-// Bootstraps local storage once, then hosts the globe (or its fallback)
-// alongside the chat agent, plus a manual sync trigger (photo-icloud-extraction).
-// Storage open failures aren't modeled by AppError — CONTRACT.md's enum
-// covers PhotosKit/CLGeocoder/LLM/webview failures, not local storage
-// bootstrap — so this is a plain error state rather than a forced-fit
-// AppError case.
+// Shows onboarding until it's actually done, then bootstraps local storage
+// and hosts the globe (or its fallback) alongside the chat agent, plus a
+// manual sync trigger (photo-icloud-extraction). Storage open failures
+// aren't modeled by AppError — CONTRACT.md's enum covers PhotosKit/
+// CLGeocoder/LLM/webview failures, not local storage bootstrap — so this is
+// a plain error state rather than a forced-fit AppError case.
 struct ContentView: View {
     private let errorReporter: any ErrorReporting = ErrorReporter()
+
+    private let onboardingProgress: any OnboardingProgressStoring = UserDefaultsOnboardingProgressStore()
+    private let apiKeyManager = AppComposition.makeAPIKeyManager()
+    private let agentPreferencesStore: any AgentPreferencesStoring = UserDefaultsAgentPreferencesStore()
+    private let photosAuthorizing: any PhotosAuthorizing = PhotosPermissionManager()
+
+    @State private var onboardingRequirements: OnboardingRequirements?
 
     @State private var chatViewModel: ChatViewModel?
     @State private var photoStore: (any PhotoStore & Sendable)?
@@ -29,7 +36,22 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if let storageError {
+            if let onboardingRequirements, !onboardingRequirements.isComplete {
+                OnboardingView(
+                    requirements: onboardingRequirements,
+                    progress: onboardingProgress,
+                    apiKeyManager: apiKeyManager,
+                    preferencesStore: agentPreferencesStore,
+                    photosAuthorizing: photosAuthorizing,
+                    onComplete: {
+                        let requirements = resolveOnboardingRequirements()
+                        self.onboardingRequirements = requirements
+                        if requirements.isComplete {
+                            Task { await bootstrap() }
+                        }
+                    }
+                )
+            } else if let storageError {
                 Text("Couldn't open local storage: \(storageError)")
                     .padding()
             } else if let photoQuery, let chatViewModel {
@@ -58,8 +80,16 @@ struct ContentView: View {
         }
         .frame(minWidth: 900, minHeight: 480)
         .task {
-            await bootstrap()
+            let requirements = resolveOnboardingRequirements()
+            onboardingRequirements = requirements
+            if requirements.isComplete {
+                await bootstrap()
+            }
         }
+    }
+
+    private func resolveOnboardingRequirements() -> OnboardingRequirements {
+        OnboardingRequirementsResolver.resolve(progress: onboardingProgress, photosAuthorizing: photosAuthorizing)
     }
 
     private var syncBar: some View {

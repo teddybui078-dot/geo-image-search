@@ -17,17 +17,35 @@ enum AppComposition {
             }
             return key
         })
-        let apiKeyManager = APIKeyManager(store: keyStore, validator: openAIClient)
         let agent = PhotoQueryAgent(
             llmClient: openAIClient,
             toolExecutor: ToolExecutor(photoQuery: query, placeNameResolver: PlaceNameResolver())
         )
         return ChatViewModel(
-            apiKeyManager: apiKeyManager,
+            apiKeyManager: makeAPIKeyManager(keyStore: keyStore, validator: openAIClient),
             agent: agent,
             globeUpdater: LoggingGlobeUpdater(),
             errorReporting: ErrorReporter()
         )
+    }
+
+    // Onboarding's API key step needs the exact same Keychain-backed
+    // manager as ChatView — a key saved during onboarding must be what the
+    // chat agent actually reads, not a second, out-of-sync Keychain entry.
+    // keyStore/validator are injectable only so makeChatViewModel above can
+    // reuse the ones it already built rather than constructing a second
+    // KeychainKeyStore/OpenAIClient pair for the same process lifetime.
+    static func makeAPIKeyManager(
+        keyStore: KeychainKeyStore = KeychainKeyStore(),
+        validator: (any APIKeyValidating)? = nil
+    ) -> APIKeyManager {
+        let resolvedValidator = validator ?? OpenAIClient(apiKeyProvider: {
+            guard let key = try keyStore.read(), !key.isEmpty else {
+                throw AgentConfigurationError.missingAPIKey
+            }
+            return key
+        })
+        return APIKeyManager(store: keyStore, validator: resolvedValidator)
     }
 
     // Shared with ContentView's manual "Sync Photo Library" trigger
