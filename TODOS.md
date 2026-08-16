@@ -26,12 +26,13 @@ What actually needs to be built, organized by subsystem. Cross-references DESIGN
 Apple's system `libsqlite3` disables `sqlite3_auto_extension`, so the standard sqlite-vec integration pattern doesn't work — SQLite and sqlite-vec are vendored as SPM C targets (`Sources/CSQLite3`, `Sources/CSQLiteVec`) built `SQLITE_CORE`-mode instead. 62 Swift Testing tests cover schema creation, R-Tree sync, the two-phase geo query, KNN similarity (including the sqlite-vec 4096 k-ceiling and soft-delete overfetch buffer), and trip clustering, all against in-memory/temp-file DBs seeded with fixture data (no real Photos data exists yet).
 
 ### 3. 3D Interactive Map
+**Done (`add-3dmap` branch):** the WKWebView/OpenGlobus globe is implemented and wired to real `PhotoQuery` data, matching CONTRACT.md's bridge message schema.
 - ~~Globe library decision~~ **Resolved: OpenGlobus** — Apache-2.0, no ion account/token friction, lighter in the WKWebView, better fit for hand-coding a custom look. Tradeoff accepted: thinner docs, no built-in time-dynamic visualization for a future trip-recap/timeline feature.
-- `WKWebView` host + `WKScriptMessageHandler` bridge (native → JS pin data, JS → native query dispatch)
-- Native fallback UI if the webview fails to load or crashes (`WKNavigationDelegate`)
-- Pin rendering from SQLite data
-- LOD/clustering by zoom level, using the chosen library's built-in support — raw rendering performance at scale, distinct from visual burst/duplicate-photo clustering
-- Hand-tweaked custom styling (color palette, custom pin/marker glyphs) — explicitly not the library's default look
+- ~~`WKWebView` host + `WKScriptMessageHandler` bridge (native → JS pin data, JS → native query dispatch)~~ **Done** — `Globe/WebViewBridge.swift` (native ↔ JS) + `Globe/GlobeView.swift` (`NSViewRepresentable` host), matching CONTRACT.md's message shapes exactly (`Globe/GlobeMessage.swift`).
+- ~~Native fallback UI if the webview fails to load or crashes (`WKNavigationDelegate`)~~ **Done** — `Globe/GlobeFallbackView.swift`, driven by `GlobeView.Coordinator`'s `WKNavigationDelegate` callbacks and a JS-side `webviewError`, both converging on the same `AppError.webviewLoadFailed` path.
+- ~~Pin rendering from SQLite data~~ **Done** — `allActivePhotosWithLocation()` → `Globe/PinClustering.swift` → `setPins`.
+- ~~LOD/clustering by zoom level~~ **Done, but not via "the chosen library's built-in support" as originally planned** — OpenGlobus has no built-in Entity/Layer clustering (checked directly against its source and the compiled bundle: zero references anywhere). `Globe/Resources/globe.js` hand-rolls it instead: a lat/lon grid sized by `camera.getAltitude()`, recomputed only when the altitude crosses a bucket boundary — necessarily client-side JS, since native has no visibility into live camera state.
+- ~~Hand-tweaked custom styling (color palette, custom pin/marker glyphs) — explicitly not the library's default look~~ **Done** — no imagery basemap; country polygons from vendored topojson styled with a custom dark-ocean/warm-land palette, pins/cluster badges as hand-drawn SVG billboards, not OpenGlobus defaults.
 
 ### 4. Q&A AI Agent
 - Shared `PhotoQuery` repository (`byLocation`, `byDateRange`, `bySimilarity`, `clusterTrips`) — one query layer, not four independent SQL builders

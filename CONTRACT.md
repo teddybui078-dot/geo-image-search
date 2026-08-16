@@ -10,7 +10,7 @@ Feature areas map 1:1 to `TODOS.md`'s Build Breakdown and to suggested branch na
 |---|---|---|---|
 | Photo/iCloud Extraction | `photo-icloud-extraction` | **Ingestion pipeline done; limited-access UI + real coverage measurement still open** | Produces `PhotoAsset` records, writes through `PhotoStore` |
 | Database Structure | `database-structure` | **✅ Merged (PR #1)** | Implements `PhotoStore` and `PhotoQuery`, owns the SQL schema |
-| 3D Interactive Map | `add-3dmap` | Not started | The `WebViewBridge` message protocol, globe rendering |
+| 3D Interactive Map | `add-3dmap` | **Bridge, pin rendering, LOD clustering, and fallback UI done; visual confirmation of the country-polygon fill still open (see PR #7)** | The `WebViewBridge` message protocol, globe rendering |
 | Q&A AI Agent | `q-and-a-ai-agent` | Not started | Agent tool schemas, calls `PhotoQuery` |
 | Embedding Pipeline | `embedding-pipeline` | Not started | Produces `EmbeddingRecord`, writes through `PhotoStore` |
 | Error Handling | `error-handling` | In progress | `AppError`, `RetryPolicy`, `ErrorReporting`, `RetryExecutor` — everyone else imports this |

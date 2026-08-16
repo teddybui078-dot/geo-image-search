@@ -1,0 +1,28 @@
+/* Custom palette lives in globe.js (Entity/Billboard styling); this file is
+   just page chrome — a full-bleed canvas with no default OpenGlobus UI
+   clutter (attribution corner, compass button, scale bar), matching
+   DESIGN.md's "not the library's default look". */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #0b1220;
+}
+
+#globe {
+    width: 100%;
+    height: 100%;
+}
+
+.og-attribution,
+.og-compass-button,
+.og-scale-control {
+    display: none !important;
+}
