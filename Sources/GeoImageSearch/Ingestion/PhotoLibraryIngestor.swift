@@ -56,6 +56,20 @@ struct PhotoLibraryIngestor {
     // and per-asset updates so a SwiftUI view can show live sync status
     // instead of a static "Syncing…" state — see SyncProgress.
     func run(dateRange: ClosedRange<Date>? = nil, progress: SyncProgress? = nil) async throws -> IngestResult {
+        // Wraps a storage-boundary call so any throw both fails `progress`
+        // with a consistent message and rethrows — factors out what were
+        // three identical do/catch/fail/rethrow blocks below (found in
+        // review: maintainability specialist). A nested function so it can
+        // capture `progress` directly instead of threading it through.
+        func failingStorage<T>(_ body: () async throws -> T) async throws -> T {
+            do {
+                return try await body()
+            } catch {
+                await progress?.fail(Self.failureMessage(for: error))
+                throw error
+            }
+        }
+
         let access = await permissionManager.requestAccess()
         guard access.isGranted else {
             errorReporter.report(.photosPermissionDenied, context: "PhotoLibraryIngestor.run")
@@ -89,18 +103,14 @@ struct PhotoLibraryIngestor {
         // PhotoStore/PhotoQuery failures propagate untouched — they're
         // SQLiteError, not AppError; CONTRACT.md's AppError cases cover the
         // Photos/CLGeocoder/LLM/embedding/webview boundaries, not storage.
-        // Still fails `progress` here (found in review: maintainability
-        // specialist) so a caller reading only PhotoLibraryIngestor sees a
-        // complete fail-on-every-throw contract, matching the permission
-        // and fetch paths above — this is the only place that reports the
-        // failure to `progress` (ContentView no longer re-fails it).
-        let storedIdentifiers: [String: StoredPhotoIdentity]
-        do {
-            storedIdentifiers = try await query.allActiveIdentifiers()
-        } catch {
-            await progress?.fail(Self.failureMessage(for: error))
-            throw error
-        }
+        // failingStorage still fails `progress` here (found in review:
+        // maintainability specialist) so a caller reading only
+        // PhotoLibraryIngestor sees a complete fail-on-every-throw
+        // contract, matching the permission and fetch paths above and the
+        // upsert/markDeleted calls below — PhotoLibraryIngestor itself is
+        // the only place that reports to `progress` now (ContentView no
+        // longer re-fails it).
+        let storedIdentifiers = try await failingStorage { try await query.allActiveIdentifiers() }
 
         let now = Date()
         let plan = SyncPlanner.plan(librarySnapshots: snapshots, storedIdentifiers: storedIdentifiers)
@@ -117,12 +127,7 @@ struct PhotoLibraryIngestor {
                 assets.append(snapshot.toPhotoAsset(placeName: placeName, now: now))
                 await progress?.recordProgress()
             }
-            do {
-                try await store.upsert(assets)
-            } catch {
-                await progress?.fail(Self.failureMessage(for: error))
-                throw error
-            }
+            try await failingStorage { try await store.upsert(assets) }
             upsertedCount += assets.count
         }
 
@@ -142,12 +147,7 @@ struct PhotoLibraryIngestor {
         // deletions are skipped there too.
         var deletedCount = 0
         if !access.isLimitedAccess, dateRange == nil, !plan.idsToMarkDeleted.isEmpty {
-            do {
-                try await store.markDeleted(ids: plan.idsToMarkDeleted)
-            } catch {
-                await progress?.fail(Self.failureMessage(for: error))
-                throw error
-            }
+            try await failingStorage { try await store.markDeleted(ids: plan.idsToMarkDeleted) }
             deletedCount = plan.idsToMarkDeleted.count
         }
 
