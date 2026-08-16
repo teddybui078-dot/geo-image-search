@@ -2,18 +2,21 @@ import SwiftUI
 
 enum OnboardingStep: Equatable {
     case welcome
-    case apiKey
     case tone
     case photosAccess
 }
 
-// Drives welcome -> apiKey -> tone -> photosAccess, skipping straight to
-// photosAccess on repeat launches once initial setup is done (per
-// OnboardingRequirements). Welcome/key/tone are asked once; photosAccess is
-// re-checked live and can be reached again on any later launch.
+// Drives welcome -> tone -> photosAccess, skipping straight to photosAccess
+// on repeat launches once initial setup is done (per OnboardingRequirements).
+// Welcome/tone are asked once; photosAccess is re-checked live and can be
+// reached again on any later launch. The OpenAI API key is deliberately
+// NOT collected here — q-and-a-ai-agent's ChatView/APIKeyManager already
+// owns that with real validation (missing/invalid/valid/quotaExhausted),
+// which this onboarding pass predates. Duplicating a second, weaker
+// Keychain entry here would just mean the agent never sees what onboarding
+// saved.
 struct OnboardingView: View {
     let progress: any OnboardingProgressStoring
-    let apiKeyStore: any APIKeyStoring
     let preferencesStore: any AgentPreferencesStoring
     let photosAuthorizing: any PhotosAuthorizing
     let onComplete: () -> Void
@@ -24,13 +27,11 @@ struct OnboardingView: View {
     init(
         requirements: OnboardingRequirements,
         progress: any OnboardingProgressStoring,
-        apiKeyStore: any APIKeyStoring,
         preferencesStore: any AgentPreferencesStoring,
         photosAuthorizing: any PhotosAuthorizing,
         onComplete: @escaping () -> Void
     ) {
         self.progress = progress
-        self.apiKeyStore = apiKeyStore
         self.preferencesStore = preferencesStore
         self.photosAuthorizing = photosAuthorizing
         self.onComplete = onComplete
@@ -41,14 +42,7 @@ struct OnboardingView: View {
         Group {
             switch step {
             case .welcome:
-                WelcomeStepView(onNext: { step = .apiKey })
-            case .apiKey:
-                APIKeyStepView(onNext: { key in
-                    if let key, !key.isEmpty {
-                        try? apiKeyStore.save(key)
-                    }
-                    step = .tone
-                })
+                WelcomeStepView(onNext: { step = .tone })
             case .tone:
                 AgentToneStepView(onNext: { tone in
                     preferencesStore.saveTone(tone)

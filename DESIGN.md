@@ -13,7 +13,7 @@ A personal tool that pulls photos from your own macOS Photos library / iCloud (v
 
 V1 is photos-only (see Premise 4 and the note under Constraints on video). The Greece/Europe example queries are the eventual full vision, including video; for v1 they resolve against photos only.
 
-This is a personal project, not a product. Distribution is not a goal today; open-sourcing it later is likely, so the code should stay reasonably clean, but no packaging is needed yet. **Amended 2026-08-16:** v1 does now ship a minimal first-run onboarding flow (Photos access, OpenAI API key, agent tone) — the "no onboarding" call above was about a polished, stranger-facing installer flow, not about the app's own first-launch setup, which turned out to matter even for a single user staring at an empty window.
+This is a personal project, not a product. Distribution is not a goal today; open-sourcing it later is likely, so the code should stay reasonably clean, but no packaging is needed yet. **Amended 2026-08-16:** v1 does now ship a minimal first-run onboarding flow (Photos access, agent tone) — the "no onboarding" call above was about a polished, stranger-facing installer flow, not about the app's own first-launch setup, which turned out to matter even for a single user staring at an empty window. The OpenAI API key is deliberately not collected here — `q-and-a-ai-agent`'s `ChatView` already owns key entry with real validation, so onboarding doesn't duplicate it.
 
 ## What Makes This Cool
 

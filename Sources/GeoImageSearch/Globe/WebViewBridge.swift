@@ -74,3 +74,10 @@ final class WebViewBridge: NSObject, WKScriptMessageHandler {
         webView.evaluateJavaScript("window.__geoImageSearchReceive(\(json))")
     }
 }
+
+// A synchronous method satisfies an `async` protocol requirement in Swift —
+// setPins/focusRegion/highlightAssets above already match GlobeUpdating's
+// shape exactly, so this is the real implementation the chat agent's
+// GlobeUpdating dependency was always meant to end up calling (see
+// CONTRACT.md's "Globe update protocol" section).
+extension WebViewBridge: GlobeUpdating {}

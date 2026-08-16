@@ -35,14 +35,16 @@ Apple's system `libsqlite3` disables `sqlite3_auto_extension`, so the standard s
 - ~~Hand-tweaked custom styling (color palette, custom pin/marker glyphs) — explicitly not the library's default look~~ **Done** — no imagery basemap; country polygons from vendored topojson styled with a custom dark-ocean/warm-land palette, pins/cluster badges as hand-drawn SVG billboards, not OpenGlobus defaults.
 
 ### 4. Q&A AI Agent
-- Shared `PhotoQuery` repository (`byLocation`, `byDateRange`, `bySimilarity`, `clusterTrips`) — one query layer, not four independent SQL builders
+**Done (`q-and-a-ai-agent` branch):** agent tool-calling loop, Keychain key storage/UX, chat UI, and hardened eval suite are implemented against the real `PhotoQuery` and the real error-handling types.
+- ~~Shared `PhotoQuery` repository (`byLocation`, `byDateRange`, `bySimilarity`, `clusterTrips`) — one query layer, not four independent SQL builders~~ **Done** — `ToolExecutor` (`Sources/GeoImageSearch/Agent/ToolExecutor.swift`) is the one place that calls `PhotoQuery`, not four independent call sites.
 - ~~LLM provider choice~~ **Resolved: OpenAI API.**
-- Keychain storage for the API key, plus key UX (validation, missing-key state, quota exhaustion — see item 3 below)
-- Agent tool-calling loop over the four tools
-- Explicit param schemas per tool (see item 1 below)
-- `cluster_trips` definition: stop duration, travel-gap threshold, timezone handling (see item 2 below)
-- Eval suite: fixed question → expected tool + params + result set (see item 1 below)
-- Chat UI wired to the agent, updates the globe on response
+- ~~Keychain storage for the API key, plus key UX (validation, missing-key state, quota exhaustion — see item 3 below)~~ **Done** — `KeychainKeyStore`/`APIKeyManager` (`Sources/GeoImageSearch/Agent/APIKeyStore.swift`), surfaced in `ChatView` as missing/invalid/quotaExhausted/valid states.
+- ~~Agent tool-calling loop over the four tools~~ **Done** — `PhotoQueryAgent` (`Sources/GeoImageSearch/Agent/PhotoQueryAgent.swift`), bounded at 8 iterations, returns the full conversation transcript so multi-turn memory works.
+- ~~Explicit param schemas per tool (see item 1 below)~~ **Done** — `ToolSchemas.swift`.
+- `cluster_trips` definition: stop duration, travel-gap threshold, timezone handling — **still deferred**, see item 2 below. `ToolExecutor` wires to `PhotoQuery.clusterTrips` with placeholder constants (1-day min stop, 2-day max gap) documented as unscoped, not a real answer to item 2.
+- ~~Eval suite: fixed question → expected tool + params + result set (see item 1 below)~~ **Done** — `eval/tool-selection.jsonl` + `Tests/GeoImageSearchTests/AgentEvalTests.swift`, covering ambiguous queries, no-result cases, and date-relative phrasing against a fixed fixture library. Runs manually (`OPENAI_API_KEY=... swift test --filter AgentEvalTests`), not scripted CI, per DESIGN.md's Success Criteria.
+- ~~Chat UI wired to the agent, updates the globe on response~~ **Done** — `ChatView`/`ChatViewModel`. "Updates the globe" currently means `GlobeUpdating`'s logging stub (`add-3dmap` hasn't landed a real `WebViewBridge` yet) — see CONTRACT.md's "Globe update protocol" section.
+- `semantic_search` stays stubbed (empty result + explanation) until `embedding-pipeline` ships real vectors into `photo_embeddings`.
 
 ### 5. Embedding Pipeline (cross-cutting — feeds Database Structure, consumed by Q&A AI Agent)
 **Done (`embedding-pipeline` branch):**
@@ -104,7 +106,7 @@ Surfaced during `/plan-eng-review` (2026-08-09), sourced from the Codex outside-
 
 **Depends on / blocked by:** Keychain storage implementation (Issue 2, decided).
 
-**Status (onboarding-flow branch, 2026-08-16):** Keychain storage now exists (`Sources/GeoImageSearch/Onboarding/APIKeyStore.swift`) and the onboarding flow prompts for the key on first launch, with an explicit "Skip for now" so a missing key is a normal, expected state rather than a broken one. Still open: validation on entry (currently just non-empty), rotation, and quota-exhaustion handling — all explicitly deferred above to Next Step 5's chat UI, which is still unbuilt (`q-and-a-ai-agent` not yet merged to `main`).
+**Status:** Done via `q-and-a-ai-agent` (merged) — `KeychainKeyStore`/`APIKeyManager` (`Sources/GeoImageSearch/Agent/APIKeyStore.swift`) cover validation on entry, rotation, and a missing/invalid/quotaExhausted state, surfaced in `ChatView`'s key-entry banner. The onboarding flow (`onboarding-flow` branch) originally added a second, weaker Keychain entry point for the key here too, before either branch was aware of the other — removed in favor of the one `ChatView` already owns, so onboarding only covers welcome, agent tone, and Photos access.
 
 ## 4. Privacy posture for LLM queries
 
