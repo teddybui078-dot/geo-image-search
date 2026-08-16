@@ -369,6 +369,133 @@ import Foundation
         #expect(result.upsertedCount == 0)
         #expect(progress.phase == .finished(result))
     }
+
+    // Gap found in coverage audit (commit 91953e0): PhotoLibraryIngestor.run
+    // now wraps query.allActiveIdentifiers(), store.upsert(), and
+    // store.markDeleted() in do/catch blocks that call progress?.fail(...)
+    // before rethrowing — completing the fail-on-every-throw contract across
+    // all 4 throw paths. But every existing test drives store/query through
+    // the real in-memory SQLite implementations, which never fail, so these
+    // 3 new catch blocks (added specifically to make failure symmetric with
+    // the permission/fetch paths) never actually executed under test.
+    @Test(
+        "storage/query failure during run sets failed progress and rethrows",
+        arguments: IngestorFailurePoint.allCases
+    )
+    @MainActor
+    func storageFailureDuringRunSetsFailedProgressAndRethrows(_ failurePoint: IngestorFailurePoint) async throws {
+        let (realStore, realQuery) = try await TestDatabase.makeStoreAndQuery()
+        // Only the markDeleted path needs a pre-existing stored asset that's
+        // absent from the fresh fetch (full access, no dateRange scope) so
+        // plan.idsToMarkDeleted is non-empty and markDeleted actually gets
+        // called.
+        if failurePoint == .markDeleted {
+            try await realStore.upsert([PhotoAssetFixtures.makeAsset(id: "gone")])
+        }
+        let store = FailingPhotoStore(
+            wrapping: realStore,
+            failOnUpsert: failurePoint == .upsert,
+            failOnMarkDeleted: failurePoint == .markDeleted
+        )
+        let query = FailingPhotoQuery(wrapping: realQuery, failOnActiveIdentifiers: failurePoint == .query)
+        let progress = SyncProgress()
+        // markDeleted needs an empty fetch (so "gone" isn't re-seen); the
+        // other two paths need at least one asset flowing into upsert.
+        let fetchedSnapshots = failurePoint == .markDeleted ? [] : [snapshot("a")]
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .authorized)),
+            fetcher: SerialFakeFetcher(results: [.success(fetchedSnapshots)]),
+            geocoder: FakeReverseGeocoder(placeNamesByCoordinate: [:])
+        )
+
+        var thrownError: Error?
+        do {
+            _ = try await ingestor.run(progress: progress)
+        } catch {
+            thrownError = error
+        }
+
+        #expect(thrownError != nil)
+        if case .failed(let message) = progress.phase {
+            #expect(message == "Sync failed: \(TestError())")
+        } else {
+            Issue.record("expected failed phase, got \(progress.phase)")
+        }
+    }
 }
 
 private struct TestError: Error {}
+
+enum IngestorFailurePoint: String, CaseIterable, Sendable, CustomStringConvertible {
+    case query, upsert, markDeleted
+    var description: String { rawValue }
+}
+
+// Delegates every read to the real in-memory query except
+// allActiveIdentifiers(), which can be switched to throw — exercises
+// PhotoLibraryIngestor.run's `query.allActiveIdentifiers()` catch block
+// (added in 91953e0) without needing a full hand-written PhotoQuery mock.
+private final class FailingPhotoQuery: PhotoQuery, @unchecked Sendable {
+    private let wrapped: SQLitePhotoQuery
+    private let failOnActiveIdentifiers: Bool
+
+    init(wrapping wrapped: SQLitePhotoQuery, failOnActiveIdentifiers: Bool) {
+        self.wrapped = wrapped
+        self.failOnActiveIdentifiers = failOnActiveIdentifiers
+    }
+
+    func byLocation(latitude: Double, longitude: Double, radiusKm: Double) async throws -> [PhotoAsset] {
+        try await wrapped.byLocation(latitude: latitude, longitude: longitude, radiusKm: radiusKm)
+    }
+
+    func byDateRange(start: Date, end: Date) async throws -> [PhotoAsset] {
+        try await wrapped.byDateRange(start: start, end: end)
+    }
+
+    func bySimilarity(embedding: [Float], limit: Int) async throws -> [PhotoAsset] {
+        try await wrapped.bySimilarity(embedding: embedding, limit: limit)
+    }
+
+    func clusterTrips(minStopDuration: TimeInterval, maxTravelGap: TimeInterval) async throws -> [TripCluster] {
+        try await wrapped.clusterTrips(minStopDuration: minStopDuration, maxTravelGap: maxTravelGap)
+    }
+
+    func allActivePhotosWithLocation() async throws -> [PhotoAsset] {
+        try await wrapped.allActivePhotosWithLocation()
+    }
+
+    func allActiveIdentifiers() async throws -> [String: StoredPhotoIdentity] {
+        if failOnActiveIdentifiers { throw TestError() }
+        return try await wrapped.allActiveIdentifiers()
+    }
+}
+
+// Delegates to the real in-memory store except upsert()/markDeleted(), each
+// independently switchable to throw — exercises PhotoLibraryIngestor.run's
+// store.upsert() and store.markDeleted() catch blocks (added in 91953e0).
+private final class FailingPhotoStore: PhotoStore, @unchecked Sendable {
+    private let wrapped: SQLitePhotoStore
+    private let failOnUpsert: Bool
+    private let failOnMarkDeleted: Bool
+
+    init(wrapping wrapped: SQLitePhotoStore, failOnUpsert: Bool, failOnMarkDeleted: Bool) {
+        self.wrapped = wrapped
+        self.failOnUpsert = failOnUpsert
+        self.failOnMarkDeleted = failOnMarkDeleted
+    }
+
+    func upsert(_ assets: [PhotoAsset]) async throws {
+        if failOnUpsert { throw TestError() }
+        try await wrapped.upsert(assets)
+    }
+
+    func markDeleted(ids: [String]) async throws {
+        if failOnMarkDeleted { throw TestError() }
+        try await wrapped.markDeleted(ids: ids)
+    }
+
+    func upsertEmbedding(_ record: EmbeddingRecord) async throws {
+        try await wrapped.upsertEmbedding(record)
+    }
+}
