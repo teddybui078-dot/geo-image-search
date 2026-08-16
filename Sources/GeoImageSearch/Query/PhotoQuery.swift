@@ -31,4 +31,16 @@ protocol PhotoQuery {
     // to correctly detect deletions of photos that never had GPS in the
     // first place.
     func allActiveIdentifiers() async throws -> [String: StoredPhotoIdentity]
+
+    // Additive (CONTRACT.md's "Additive method" note under Read interface),
+    // added by embedding-pipeline: lets a re-run of the embedding pipeline
+    // skip assets already embedded at the current model version instead of
+    // re-embedding the whole library every time.
+    func embeddedAssetIDs(modelVersion: String) async throws -> Set<String>
+}
+
+extension PhotoQuery {
+    // Default-empty: degrades to "nothing considered already embedded"
+    // rather than failing to compile for any other conformer.
+    func embeddedAssetIDs(modelVersion: String) async throws -> Set<String> { [] }
 }

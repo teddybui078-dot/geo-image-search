@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Geo Image Search — Globe</title>
+<link rel="stylesheet" href="vendor/og.css" />
+<link rel="stylesheet" href="globe.css" />
+</head>
+<body>
+<div id="globe"></div>
+<!-- Classic (non-module) script: topojson-client is a UMD bundle, not an ES
+     module — it attaches to window.topojson, which globe.js reads. Classic
+     scripts execute in document order before deferred module scripts run,
+     so window.topojson is guaranteed to exist by the time globe.js runs. -->
+<script src="vendor/topojson-client.min.js"></script>
+<script type="module" src="globe.js"></script>
+</body>
+</html>

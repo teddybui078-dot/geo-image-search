@@ -9,70 +9,105 @@ struct GeoImageSearchApp: App {
     }
 }
 
+// Bootstraps local storage once, then hosts the globe (or its fallback)
+// alongside the chat agent, plus a manual sync trigger (photo-icloud-extraction).
+// Storage open failures aren't modeled by AppError — CONTRACT.md's enum
+// covers PhotosKit/CLGeocoder/LLM/webview failures, not local storage
+// bootstrap — so this is a plain error state rather than a forced-fit
+// AppError case.
 struct ContentView: View {
-    @State private var viewModel: ChatViewModel?
-    @State private var bootstrapError: String?
-    @State private var syncStatus: String?
+    private let errorReporter: any ErrorReporting = ErrorReporter()
+
+    @State private var chatViewModel: ChatViewModel?
+    @State private var photoStore: (any PhotoStore & Sendable)?
+    @State private var photoQuery: (any PhotoQuery & Sendable)?
+    @State private var storageError: String?
+    @State private var loadFailed = false
+    @State private var retryToken = 0
+    @State private var syncStatus = "Not synced yet."
     @State private var isSyncing = false
 
     var body: some View {
         Group {
-            if let viewModel {
-                ChatView(viewModel: viewModel)
-                    .safeAreaInset(edge: .top) {
-                        if let syncStatus {
-                            Text(syncStatus)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.leading)
-                                .padding(8)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(.thinMaterial)
-                        }
-                    }
-                    .toolbar {
-                        ToolbarItem(placement: .automatic) {
-                            Button(isSyncing ? "Syncing…" : "Sync Photo Library") {
-                                Task { await runIngestion() }
-                            }
-                            .disabled(isSyncing)
-                        }
-                    }
-            } else if let bootstrapError {
-                Text("Failed to start: \(bootstrapError)")
-                    .foregroundStyle(.secondary)
+            if let storageError {
+                Text("Couldn't open local storage: \(storageError)")
                     .padding()
+            } else if let photoQuery, let chatViewModel {
+                HSplitView {
+                    VStack(spacing: 0) {
+                        syncBar
+                        if loadFailed {
+                            GlobeFallbackView(onRetry: {
+                                loadFailed = false
+                                retryToken += 1
+                            })
+                        } else {
+                            GlobeView(photoQuery: photoQuery, errorReporter: errorReporter, loadFailed: $loadFailed)
+                                .id(retryToken)
+                        }
+                    }
+                    .frame(minWidth: 360)
+
+                    ChatView(viewModel: chatViewModel)
+                        .frame(minWidth: 320)
+                }
             } else {
-                ProgressView("Starting Geo Image Search…")
+                ProgressView("Opening your library…")
+                    .padding()
             }
         }
+        .frame(minWidth: 900, minHeight: 480)
         .task {
-            do {
-                viewModel = try await AppComposition.makeChatViewModel()
-            } catch {
-                bootstrapError = error.localizedDescription
-            }
+            await bootstrap()
         }
     }
 
-    // Manual trigger for TODOS.md item 6: validate real GPS coverage % against
-    // the user's own library. No polished onboarding UI yet — this exists so
-    // that number can actually be measured by running the app (via Xcode, not
-    // `swift run`/`swift test`, neither of which carries the Photos
-    // entitlement) against a real library. Shares AppComposition's database
-    // path with the chat agent's PhotoQuery, so a sync here is immediately
-    // visible to it.
+    private var syncBar: some View {
+        HStack {
+            Text(syncStatus)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Spacer()
+            // Manual trigger for TODOS.md item 6: validate real GPS coverage
+            // % against the user's own library. No polished onboarding UI
+            // yet — this exists so that number can actually be measured by
+            // running the app (via Xcode, not `swift run`/`swift test`,
+            // neither of which carries the Photos entitlement) against a
+            // real library.
+            Button(isSyncing ? "Syncing…" : "Sync Photo Library") {
+                Task { await runIngestion() }
+            }
+            .disabled(isSyncing)
+        }
+        .padding(8)
+    }
+
+    private func bootstrap() async {
+        do {
+            let (store, query) = try await AppComposition.openPhotoStore()
+            photoStore = store
+            photoQuery = query
+            chatViewModel = try await AppComposition.makeChatViewModel(query: query)
+        } catch {
+            storageError = error.localizedDescription
+        }
+    }
+
     private func runIngestion() async {
+        guard let photoStore, let photoQuery else { return }
         isSyncing = true
         defer { isSyncing = false }
         do {
-            let (store, query) = try await AppComposition.openPhotoStore()
-            let result = try await PhotoLibraryIngestor(store: store, query: query).run()
+            let result = try await PhotoLibraryIngestor(store: photoStore, query: photoQuery, errorReporter: errorReporter).run()
             syncStatus = """
             Synced \(result.totalLibraryAssets) photos — \(result.upsertedCount) written, \(result.deletedCount) removed. \
             GPS coverage: \(String(format: "%.1f", result.gpsCoverage.coveragePercent))% (\(result.gpsCoverage.assetsWithGPS)/\(result.gpsCoverage.totalAssets))\
-            \(result.isLimitedAccess ? " ⚠️ Limited Photos access — only a subset of the library is visible." : "")
+            \(result.isLimitedAccess ? " — ⚠️ limited Photos access, only a subset of the library is visible." : "")
             """
+            // Reloads GlobeView so it re-fetches allActivePhotosWithLocation()
+            // and picks up whatever this sync just wrote.
+            retryToken += 1
         } catch {
             syncStatus = "Sync failed: \(error)"
         }

@@ -10,9 +10,9 @@ Feature areas map 1:1 to `TODOS.md`'s Build Breakdown and to suggested branch na
 |---|---|---|---|
 | Photo/iCloud Extraction | `photo-icloud-extraction` | **Ingestion pipeline done; limited-access UI + real coverage measurement still open** | Produces `PhotoAsset` records, writes through `PhotoStore` |
 | Database Structure | `database-structure` | **✅ Merged (PR #1)** | Implements `PhotoStore` and `PhotoQuery`, owns the SQL schema |
-| 3D Interactive Map | `add-3dmap` | Not started | The `WebViewBridge` message protocol, globe rendering |
-| Q&A AI Agent | `q-and-a-ai-agent` | In progress | Agent tool schemas, calls `PhotoQuery`, the `GlobeUpdating` protocol |
-| Embedding Pipeline | `embedding-pipeline` | Not started | Produces `EmbeddingRecord`, writes through `PhotoStore` |
+| 3D Interactive Map | `add-3dmap` | **✅ Merged (PR #7)** — bridge, pin rendering, LOD clustering, and fallback UI done; visual confirmation of the country-polygon fill still open | The `WebViewBridge` message protocol, globe rendering |
+| Q&A AI Agent | `q-and-a-ai-agent` | In progress | Agent tool schemas, calls `PhotoQuery`, the `GlobeUpdating` protocol (now implemented by `WebViewBridge`, see "Globe update protocol" below) |
+| Embedding Pipeline | `embedding-pipeline` | **✅ Merged (PR #6)** | Produces `EmbeddingRecord`, writes through `PhotoStore` |
 | Error Handling | `error-handling` | **✅ Merged (PR #2)** | `AppError`, `RetryPolicy`, `ErrorReporting`, `RetryExecutor` — everyone else imports this |
 
 `database-structure` and `error-handling` are both real now — `PhotoStore`/`PhotoQuery` against actual SQLite in `Sources/GeoImageSearch/Storage/`, and `AppError`/`RetryPolicy`/`ErrorReporting`/`RetryExecutor` in `Sources/GeoImageSearch/Common/`. Every other feature should build against the real thing, not a mock or a local placeholder, from here on.
@@ -34,8 +34,8 @@ struct PhotoAsset: Identifiable, Codable {
 
 struct EmbeddingRecord: Codable {
     let assetID: String         // PhotoAsset.id
-    let vector: [Float]         // dimension TBD — see "Open dependency" below
-    let modelVersion: String    // e.g. "mobileclip-s0-v1" — lets you re-embed if the model changes
+    let vector: [Float]         // 512 dims — see "Model choice, resolved" below
+    let modelVersion: String    // "mobileclip-s2-v1" — lets you re-embed if the model changes
     let generatedAt: Date
 }
 
@@ -50,7 +50,9 @@ struct TripCluster: Codable {
 }
 ```
 
-**Open dependency, resolved:** `EmbeddingRecord.vector`'s dimension depends on the CoreML model choice (TODOS.md item 5, still not decided). Rather than guessing a number, `database-structure` made the dimension a runtime parameter to `Schema.create(in:embeddingDimension:)` — so `embedding-pipeline` passes its actual model's dimension when it sets up storage, no schema coordination or migration needed once the model is picked. This is the pattern to reach for generally when one feature's shape depends on another's not-yet-made decision: parameterize instead of guessing a placeholder value.
+**Open dependency, resolved:** `EmbeddingRecord.vector`'s dimension depends on the CoreML model choice (TODOS.md item 5 — see "Model choice, resolved" immediately below). Rather than guessing a number, `database-structure` made the dimension a runtime parameter to `Schema.create(in:embeddingDimension:)` — so `embedding-pipeline` passes its actual model's dimension when it sets up storage, no schema coordination or migration needed once the model is picked. This is the pattern to reach for generally when one feature's shape depends on another's not-yet-made decision: parameterize instead of guessing a placeholder value.
+
+**Model choice, resolved:** `embedding-pipeline` picked **MobileCLIP-S2** (CoreML export from `apple/coreml-mobileclip`) — **embedding dimension 512**, `EmbeddingRecord.modelVersion = "mobileclip-s2-v1"`. Chosen over SigLIP 2 (Apache-2.0, unambiguous, but 768-dim and needs re-conversion to hit this project's macOS 14 floor) — accepted MobileCLIP's license ambiguity (the CoreML export repo's declared license points at a file Apple deleted when it relicensed the underlying weights research-only in August 2025) in exchange for ready-made CoreML exports and no conversion work. Mitigation: the `.mlpackage` weight files are never committed to this MIT-licensed repo — downloaded at first run into Application Support, see the embedding-pipeline README for the full note. `Schema.create` is called with `embeddingDimension: 512`.
 
 ## Database schema (owned by `database-structure`, written to by `photo-icloud-extraction` and `embedding-pipeline`)
 
@@ -120,12 +122,15 @@ protocol PhotoQuery {
     func clusterTrips(minStopDuration: TimeInterval, maxTravelGap: TimeInterval) async throws -> [TripCluster]
     func allActivePhotosWithLocation() async throws -> [PhotoAsset]                    // feeds the globe's initial pin load
     func allActiveIdentifiers() async throws -> [String: StoredPhotoIdentity]          // id -> (updatedAt, placeName), GPS or not — feeds relaunch sync's diff
+    func embeddedAssetIDs(modelVersion: String) async throws -> Set<String>            // additive, see note below
 }
 ```
 
 `add-3dmap` only needs `allActivePhotosWithLocation()` to build the initial globe view — it does not need the other methods, and does not need to wait on `q-and-a-ai-agent`'s work.
 
 **Additive change (`photo-icloud-extraction`):** `allActiveIdentifiers()` was added after this file's original four-method draft, per the "Changing the contract" rule for additive changes (new method, no coordination needed). Relaunch sync needs every active photo's stable id + last-known `updatedAt` to diff against a fresh library enumeration — including no-GPS photos, which `allActivePhotosWithLocation()` deliberately excludes. `placeName` was added to the return value in adversarial review (Codex): a re-upserted photo whose geocode call fails needs its previously-resolved place name to fall back on, or a transient CLGeocoder failure silently erases previously-good data. See "Relaunch sync strategy" below for how it's used.
+
+**Additive method, added by `embedding-pipeline`:** `embeddedAssetIDs(modelVersion:)` lets a re-run of the embedding pipeline skip assets already embedded at the current model version instead of re-embedding the whole library every time. Ships with a default-empty protocol extension (`{ [] }`), so it's non-breaking for any other conformer — degrades to "nothing considered already embedded" rather than failing to compile or behave incorrectly.
 
 ## Relaunch sync strategy (owned by `photo-icloud-extraction`)
 
@@ -159,7 +164,7 @@ protocol PhotoQuery {
 
 ## Globe update protocol (owned by `q-and-a-ai-agent`, implemented by `add-3dmap`)
 
-`add-3dmap` hasn't landed yet — `WebViewBridge` is still an empty stub — so `q-and-a-ai-agent` defined a small Swift protocol the chat UI codes against today, backed by a logging no-op (`LoggingGlobeUpdater`). This is additive (a new protocol, not a change to an existing locked type), so it's landing without cross-branch coordination per "Changing the contract" below. When `add-3dmap` is built, its real `WebViewBridge` should conform `GlobeUpdating` to the native→JS bridge messages above (`setPins`/`focusRegion`/`highlightAssets` map 1:1 to the `setPins`/`focusRegion`/`highlightAssets` JSON messages) — the chat UI call site doesn't change.
+`q-and-a-ai-agent` defined a small Swift protocol the chat UI codes against, originally backed by a logging no-op (`LoggingGlobeUpdater`) since `add-3dmap` hadn't landed yet — additive (a new protocol, not a change to an existing locked type), so it landed without cross-branch coordination per "Changing the contract" below. `add-3dmap` has since merged (PR #7) and defined its own `GlobePin`/`GlobeBounds` (`Globe/GlobeMessage.swift`, `Codable` — a strict superset of what `q-and-a-ai-agent` had independently declared) for its native→JS wire messages; `q-and-a-ai-agent`'s merge-conflict resolution deduplicated onto those instead of keeping two structurally-identical types, and added `extension WebViewBridge: GlobeUpdating {}` — `setPins`/`focusRegion`/`highlightAssets` already matched exactly (a synchronous method satisfies an `async` protocol requirement in Swift), so this is a one-line conformance, not a rewrite. `ContentView` still constructs `ChatViewModel` with `LoggingGlobeUpdater` rather than the real `WebViewBridge` — `GlobeView` owns its `WebViewBridge` instance privately (`Globe/GlobeView.swift`'s `Coordinator`) with no external hook to hand it to `ChatViewModel` yet, so wiring the chat agent's results into the live globe is follow-up work, not done as part of this merge.
 
 ```swift
 protocol GlobeUpdating: Sendable {
@@ -168,13 +173,13 @@ protocol GlobeUpdating: Sendable {
     func highlightAssets(ids: [String]) async
 }
 
-struct GlobePin: Sendable, Equatable {
+struct GlobePin: Codable, Equatable, Sendable {
     let id: String
     let lat: Double
     let lon: Double
 }
 
-struct GlobeBounds: Sendable, Equatable {
+struct GlobeBounds: Codable, Equatable, Sendable {
     let minLat: Double
     let maxLat: Double
     let minLon: Double
@@ -279,9 +284,9 @@ Per `/plan-eng-review`: one shared `ErrorReporting` surface (consistent UI prese
 
 ## Parallelization guide
 
-**Merged to `main`:** `AppError`/`RetryPolicy`/`ErrorReporting`/`RetryExecutor` are implemented against the shapes above (PR #2). `photo-icloud-extraction` and `q-and-a-ai-agent` both already build against the real thing (`PhotosRetryPolicy`/`GeocodingRetryPolicy`, `LLMRetryPolicy`) — `add-3dmap` and `embedding-pipeline` should too now, no more local placeholder error types needed. Any worktree branched before PR #2 merged should merge `main` in before continuing (a stale worktree's `Common/` files are still empty stubs from before `error-handling` landed).
+**`error-handling` is merged (PR #2):** `AppError`/`RetryPolicy`/`ErrorReporting`/`RetryExecutor` are implemented against the shapes above in `Sources/GeoImageSearch/Common/`. `photo-icloud-extraction` (`PhotosRetryPolicy`/`GeocodingRetryPolicy`), `embedding-pipeline` (`EmbeddingRetryPolicy`), and `add-3dmap` all build against the real thing now. `q-and-a-ai-agent` (`LLMRetryPolicy`) does too — any worktree branched before PR #2 merged should merge `main` in before continuing (a stale worktree's `Common/` files are still empty stubs from before `error-handling` landed).
 
-**`q-and-a-ai-agent`:** built against the real `PhotoQuery` and the real error-handling types. Its `semantic_search` tool specifically needs `embedding-pipeline`'s work to return meaningful results (real embeddings have to exist in `photo_embeddings`) — it's stubbed (no results, explanatory message) until embeddings exist; the other three tools are built and tested against the real `SQLitePhotoQuery` now.
+**`q-and-a-ai-agent`:** built against the real `PhotoQuery` and the real error-handling types. `semantic_search` is still stubbed (no results, explanatory message) — `embedding-pipeline` has since merged and resolved the CoreML model (MobileCLIP-S2, CONTRACT.md's "Model choice, resolved"), so real embeddings can now exist in `photo_embeddings`, but `ToolExecutor` hasn't been wired to actually generate a query embedding and call `PhotoQuery.bySimilarity` yet — that's follow-up work, not done as part of this merge. The other three tools are built and tested against the real `SQLitePhotoQuery`.
 
 ## Changing the contract
 

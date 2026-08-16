@@ -26,12 +26,13 @@ What actually needs to be built, organized by subsystem. Cross-references DESIGN
 Apple's system `libsqlite3` disables `sqlite3_auto_extension`, so the standard sqlite-vec integration pattern doesn't work — SQLite and sqlite-vec are vendored as SPM C targets (`Sources/CSQLite3`, `Sources/CSQLiteVec`) built `SQLITE_CORE`-mode instead. 62 Swift Testing tests cover schema creation, R-Tree sync, the two-phase geo query, KNN similarity (including the sqlite-vec 4096 k-ceiling and soft-delete overfetch buffer), and trip clustering, all against in-memory/temp-file DBs seeded with fixture data (no real Photos data exists yet).
 
 ### 3. 3D Interactive Map
+**Done (`add-3dmap` branch):** the WKWebView/OpenGlobus globe is implemented and wired to real `PhotoQuery` data, matching CONTRACT.md's bridge message schema.
 - ~~Globe library decision~~ **Resolved: OpenGlobus** — Apache-2.0, no ion account/token friction, lighter in the WKWebView, better fit for hand-coding a custom look. Tradeoff accepted: thinner docs, no built-in time-dynamic visualization for a future trip-recap/timeline feature.
-- `WKWebView` host + `WKScriptMessageHandler` bridge (native → JS pin data, JS → native query dispatch)
-- Native fallback UI if the webview fails to load or crashes (`WKNavigationDelegate`)
-- Pin rendering from SQLite data
-- LOD/clustering by zoom level, using the chosen library's built-in support — raw rendering performance at scale, distinct from visual burst/duplicate-photo clustering
-- Hand-tweaked custom styling (color palette, custom pin/marker glyphs) — explicitly not the library's default look
+- ~~`WKWebView` host + `WKScriptMessageHandler` bridge (native → JS pin data, JS → native query dispatch)~~ **Done** — `Globe/WebViewBridge.swift` (native ↔ JS) + `Globe/GlobeView.swift` (`NSViewRepresentable` host), matching CONTRACT.md's message shapes exactly (`Globe/GlobeMessage.swift`).
+- ~~Native fallback UI if the webview fails to load or crashes (`WKNavigationDelegate`)~~ **Done** — `Globe/GlobeFallbackView.swift`, driven by `GlobeView.Coordinator`'s `WKNavigationDelegate` callbacks and a JS-side `webviewError`, both converging on the same `AppError.webviewLoadFailed` path.
+- ~~Pin rendering from SQLite data~~ **Done** — `allActivePhotosWithLocation()` → `Globe/PinClustering.swift` → `setPins`.
+- ~~LOD/clustering by zoom level~~ **Done, but not via "the chosen library's built-in support" as originally planned** — OpenGlobus has no built-in Entity/Layer clustering (checked directly against its source and the compiled bundle: zero references anywhere). `Globe/Resources/globe.js` hand-rolls it instead: a lat/lon grid sized by `camera.getAltitude()`, recomputed only when the altitude crosses a bucket boundary — necessarily client-side JS, since native has no visibility into live camera state.
+- ~~Hand-tweaked custom styling (color palette, custom pin/marker glyphs) — explicitly not the library's default look~~ **Done** — no imagery basemap; country polygons from vendored topojson styled with a custom dark-ocean/warm-land palette, pins/cluster badges as hand-drawn SVG billboards, not OpenGlobus defaults.
 
 ### 4. Q&A AI Agent
 **Done (`q-and-a-ai-agent` branch):** agent tool-calling loop, Keychain key storage/UX, chat UI, and hardened eval suite are implemented against the real `PhotoQuery` and the real error-handling types.
@@ -46,8 +47,9 @@ Apple's system `libsqlite3` disables `sqlite3_auto_extension`, so the standard s
 - `semantic_search` stays stubbed (empty result + explanation) until `embedding-pipeline` ships real vectors into `photo_embeddings`.
 
 ### 5. Embedding Pipeline (cross-cutting — feeds Database Structure, consumed by Q&A AI Agent)
-- CoreML embedding model selection (MobileCLIP variant — dimension, tokenizer, license) — see item 5 below, gates the sqlite-vec schema
-- Background-queue, bounded-concurrency generation with visible progress and an optional date-range scope for first-run indexing
+**Done (`embedding-pipeline` branch):**
+- ~~CoreML embedding model selection (MobileCLIP variant — dimension, tokenizer, license) — see item 5 below, gates the sqlite-vec schema~~ **Done** — see item 5 below for the decision and its rationale.
+- ~~Background-queue, bounded-concurrency generation with visible progress and an optional date-range scope for first-run indexing~~ **Done** — `EmbeddingQueue` (`Sources/GeoImageSearch/Embeddings/`), a sliding-window bounded task group over `PhotoQuery.byDateRange`-sourced candidates, per-asset retry via a new `EmbeddingRetryPolicy`, an `@Observable` `EmbeddingProgress` plus a minimal SwiftUI view, writing through the real `PhotoStore.upsertEmbedding`. Not yet wired into a real app shell or an on-device model download UI trigger — `GeoImageSearchApp.swift` is still a placeholder, left for a later integration merge.
 
 ### 6. Error Handling (cross-cutting — spans Extraction, Database writes, and the Agent)
 **Done (`error-handling` branch):** `AppError`/`RetryPolicy`/`ErrorReporting` are implemented against CONTRACT.md's locked shapes.
@@ -120,19 +122,17 @@ Surfaced during `/plan-eng-review` (2026-08-09), sourced from the Codex outside-
 
 ## 5. CoreML embedding model selection
 
-**What:** Pick the specific MobileCLIP variant (embedding dimension, tokenizer/text-tower availability, license).
+**Resolved: MobileCLIP-S2**, CoreML export from `apple/coreml-mobileclip`. Embedding dimension **512** (`Schema.create(embeddingDimension: 512)`), `EmbeddingRecord.modelVersion = "mobileclip-s2-v1"`. See CONTRACT.md's "Model choice, resolved" note for the full shape (tensor names, preprocessing, tokenizer).
 
-**Why:** Not a detail — the choice determines the embedding dimension `photo_embeddings` is created with.
+**What it was:** Pick the specific MobileCLIP variant (embedding dimension, tokenizer/text-tower availability, license).
 
-**No longer schema-blocking:** the `database-structure` branch parameterized the sqlite-vec schema on `embeddingDimension` at creation time (`Schema.photoEmbeddingsSQL(dimension:)`) rather than hardcoding CONTRACT.md's `FLOAT[512]` placeholder, specifically so this choice wouldn't require a migration later. Picking the model is still a prerequisite for the embedding-pipeline worktree itself (and for `upsertEmbedding`'s dimension validation to mean anything against a real model), just no longer a hard blocker on the database schema landing.
+**Why it mattered:** Not a detail — the choice determines the embedding dimension `photo_embeddings` is created with.
 
-**Pros:** Avoids a schema migration later; picking early means the sqlite-vec table is right the first time.
+**No longer schema-blocking (background, still true):** the `database-structure` branch parameterized the sqlite-vec schema on `embeddingDimension` at creation time (`Schema.photoEmbeddingsSQL(dimension:)`) rather than hardcoding a placeholder, specifically so this choice wouldn't require a migration later.
 
-**Cons:** Requires research into MobileCLIP variants (and any licensing terms) before Next Step 4 can fully start.
+**The decision, and the tradeoff behind it:** A research pass compared MobileCLIP-S2 against SigLIP 2 base. SigLIP 2 is Apache-2.0 (unambiguous) versus MobileCLIP's license ambiguity — the CoreML export repo's declared permissive license points at a file Apple deleted when it quietly relicensed the underlying weights research-only in August 2025, so the terms are effectively unverifiable rather than confirmed. MobileCLIP-S2 was chosen anyway: it has ready-made CoreML exports for both towers (SigLIP 2's only community CoreML ports target macOS 15, missing this project's macOS 14 floor, and would need about a day of `coremltools` re-conversion), is ~200MB versus SigLIP 2's ~544MB, and is the accuracy/size knee of the MobileCLIP family. Mitigation for the license risk: the `.mlpackage` weight files are never committed to this MIT-licensed repo — downloaded at first run into Application Support, with the ambiguity documented in the embedding-pipeline README. Revisit if this ever needs to ship to someone else's machine as a bundled asset rather than a runtime download.
 
-**Context:** Next Step 4 prerequisite — research and pick the specific model variant before the embedding pipeline starts writing real vectors.
-
-**Depends on / blocked by:** None — can be researched independently.
+**Depends on / blocked by:** None — done.
 
 ## 6. Real GPS coverage + limited-access risk
 

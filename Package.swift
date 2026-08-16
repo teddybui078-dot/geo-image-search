@@ -35,7 +35,17 @@ let package = Package(
         .executableTarget(
             name: "GeoImageSearch",
             dependencies: ["CSQLite3", "CSQLiteVec"],
-            path: "Sources/GeoImageSearch"
+            path: "Sources/GeoImageSearch",
+            exclude: ["Embeddings/Tokenizer/LICENSE-CLIPTokenizer.txt"],
+            // Globe/Resources: the OpenGlobus HTML/JS/vendor bundle the
+            // globe WKWebView loads via Bundle.module — .copy (not
+            // .process) since these are pre-built files, not assets SPM
+            // should optimize/rewrite. Resources/tokenizer.json: the
+            // vendored CLIP BPE vocab/merges (see Embeddings/Tokenizer/).
+            resources: [
+                .copy("Globe/Resources"),
+                .copy("Resources/tokenizer.json")
+            ]
         ),
         .testTarget(
             name: "GeoImageSearchTests",

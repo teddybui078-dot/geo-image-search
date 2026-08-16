@@ -5,16 +5,11 @@ import Foundation
 // place to update as photo-icloud-extraction and add-3dmap land their own
 // real implementations.
 enum AppComposition {
-    // TODOS.md item 5 — the CoreML embedding model isn't picked yet, so
-    // this is a placeholder (CONTRACT.md's original draft dimension) until
-    // embedding-pipeline chooses a real MobileCLIP variant. A mismatch
-    // against the eventual real model throws SQLiteError.embeddingDimensionMismatch
-    // at query time rather than failing silently.
-    static let placeholderEmbeddingDimension = 512
-
+    // Shares the store/query ContentView already opened (via openPhotoStore()
+    // below) rather than opening its own second connection to the same
+    // database file.
     @MainActor
-    static func makeChatViewModel() async throws -> ChatViewModel {
-        let (_, query) = try await openPhotoStore()
+    static func makeChatViewModel(query: any PhotoQuery & Sendable) async throws -> ChatViewModel {
         let keyStore = KeychainKeyStore()
         let openAIClient = OpenAIClient(apiKeyProvider: {
             guard let key = try keyStore.read(), !key.isEmpty else {
@@ -44,7 +39,9 @@ enum AppComposition {
     // should get it from.
     static func openPhotoStore() async throws -> (store: SQLitePhotoStore, query: SQLitePhotoQuery) {
         let path = try databaseURL().path
-        return try await SQLiteDatabase.open(atPath: path, embeddingDimension: placeholderEmbeddingDimension)
+        // TODOS.md item 5 is resolved (MobileCLIP-S2) — this is the real
+        // dimension, not a placeholder, per CONTRACT.md's "Model choice, resolved".
+        return try await SQLiteDatabase.open(atPath: path, embeddingDimension: EmbeddingModelInfo.embeddingDimension)
     }
 
     static func databaseURL() throws -> URL {

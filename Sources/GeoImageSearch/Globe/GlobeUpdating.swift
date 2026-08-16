@@ -1,32 +1,25 @@
 import Foundation
 
 // Mirrors CONTRACT.md's native -> JS bridge message shapes exactly (see
-// "Globe update protocol" section), so add-3dmap's real WebViewBridge can
-// conform to this later with zero call-site changes in the chat UI.
-// add-3dmap hasn't landed yet — WebViewBridge (Globe/WebViewBridge.swift) is
-// still an empty stub — so the chat UI codes against this protocol today,
-// backed by LoggingGlobeUpdater below.
+// "Globe update protocol" section) — WebViewBridge.swift now conforms this
+// to the real globe (see the extension at the bottom of that file);
+// LoggingGlobeUpdater below remains for tests/previews and any call site
+// not yet wired to a live GlobeView.
+//
+// GlobePin/GlobeBounds themselves live in Globe/GlobeMessage.swift (the
+// add-3dmap branch's wire-message types) rather than here — the two
+// branches independently defined equivalent structs before merging;
+// GlobeMessage.swift's Codable versions are a strict superset of what this
+// file originally declared, so this file just uses those instead of
+// duplicating them.
 protocol GlobeUpdating: Sendable {
     func setPins(_ pins: [GlobePin]) async
     func focusRegion(_ bounds: GlobeBounds) async
     func highlightAssets(ids: [String]) async
 }
 
-struct GlobePin: Sendable, Equatable {
-    let id: String
-    let lat: Double
-    let lon: Double
-}
-
-struct GlobeBounds: Sendable, Equatable {
-    let minLat: Double
-    let maxLat: Double
-    let minLon: Double
-    let maxLon: Double
-}
-
-// No-op/log-only implementation used until add-3dmap lands a real
-// WebViewBridge conforming to GlobeUpdating.
+// No-op/log-only implementation for tests/previews and any call site not
+// yet wired to a live GlobeView/WebViewBridge.
 final class LoggingGlobeUpdater: GlobeUpdating, Sendable {
     private let sink: @Sendable (String) -> Void
 
