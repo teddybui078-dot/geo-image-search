@@ -43,8 +43,8 @@ Apple's system `libsqlite3` disables `sqlite3_auto_extension`, so the standard s
 - Chat UI wired to the agent, updates the globe on response
 
 ### 5. Embedding Pipeline (cross-cutting — feeds Database Structure, consumed by Q&A AI Agent)
-- CoreML embedding model selection (MobileCLIP variant — dimension, tokenizer, license) — see item 5 below, gates the sqlite-vec schema
-- Background-queue, bounded-concurrency generation with visible progress and an optional date-range scope for first-run indexing
+- ~~CoreML embedding model selection (MobileCLIP variant — dimension, tokenizer, license) — see item 5 below, gates the sqlite-vec schema~~ **Done** — see item 5 below for the decision and its rationale.
+- Background-queue, bounded-concurrency generation with visible progress and an optional date-range scope for first-run indexing — in progress on `embedding-pipeline`
 
 ### 6. Error Handling (cross-cutting — spans Extraction, Database writes, and the Agent)
 **Done (`error-handling` branch):** `AppError`/`RetryPolicy`/`ErrorReporting` are implemented against CONTRACT.md's locked shapes.
@@ -117,19 +117,17 @@ Surfaced during `/plan-eng-review` (2026-08-09), sourced from the Codex outside-
 
 ## 5. CoreML embedding model selection
 
-**What:** Pick the specific MobileCLIP variant (embedding dimension, tokenizer/text-tower availability, license).
+**Resolved: MobileCLIP-S2**, CoreML export from `apple/coreml-mobileclip`. Embedding dimension **512** (`Schema.create(embeddingDimension: 512)`), `EmbeddingRecord.modelVersion = "mobileclip-s2-v1"`. See CONTRACT.md's "Model choice, resolved" note for the full shape (tensor names, preprocessing, tokenizer).
 
-**Why:** Not a detail — the choice determines the embedding dimension `photo_embeddings` is created with.
+**What it was:** Pick the specific MobileCLIP variant (embedding dimension, tokenizer/text-tower availability, license).
 
-**No longer schema-blocking:** the `database-structure` branch parameterized the sqlite-vec schema on `embeddingDimension` at creation time (`Schema.photoEmbeddingsSQL(dimension:)`) rather than hardcoding CONTRACT.md's `FLOAT[512]` placeholder, specifically so this choice wouldn't require a migration later. Picking the model is still a prerequisite for the embedding-pipeline worktree itself (and for `upsertEmbedding`'s dimension validation to mean anything against a real model), just no longer a hard blocker on the database schema landing.
+**Why it mattered:** Not a detail — the choice determines the embedding dimension `photo_embeddings` is created with.
 
-**Pros:** Avoids a schema migration later; picking early means the sqlite-vec table is right the first time.
+**No longer schema-blocking (background, still true):** the `database-structure` branch parameterized the sqlite-vec schema on `embeddingDimension` at creation time (`Schema.photoEmbeddingsSQL(dimension:)`) rather than hardcoding a placeholder, specifically so this choice wouldn't require a migration later.
 
-**Cons:** Requires research into MobileCLIP variants (and any licensing terms) before Next Step 4 can fully start.
+**The decision, and the tradeoff behind it:** A research pass compared MobileCLIP-S2 against SigLIP 2 base. SigLIP 2 is Apache-2.0 (unambiguous) versus MobileCLIP's license ambiguity — the CoreML export repo's declared permissive license points at a file Apple deleted when it quietly relicensed the underlying weights research-only in August 2025, so the terms are effectively unverifiable rather than confirmed. MobileCLIP-S2 was chosen anyway: it has ready-made CoreML exports for both towers (SigLIP 2's only community CoreML ports target macOS 15, missing this project's macOS 14 floor, and would need about a day of `coremltools` re-conversion), is ~200MB versus SigLIP 2's ~544MB, and is the accuracy/size knee of the MobileCLIP family. Mitigation for the license risk: the `.mlpackage` weight files are never committed to this MIT-licensed repo — downloaded at first run into Application Support, with the ambiguity documented in the embedding-pipeline README. Revisit if this ever needs to ship to someone else's machine as a bundled asset rather than a runtime download.
 
-**Context:** Next Step 4 prerequisite — research and pick the specific model variant before the embedding pipeline starts writing real vectors.
-
-**Depends on / blocked by:** None — can be researched independently.
+**Depends on / blocked by:** None — done.
 
 ## 6. Real GPS coverage + limited-access risk
 
