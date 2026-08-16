@@ -11,7 +11,7 @@ Early development, being built across parallel feature branches.
 | Feature | Branch | Status |
 |---|---|---|
 | Database Structure | `database-structure` | ✅ Merged |
-| Photo/iCloud Extraction | `photo-icloud-extraction` | In progress |
+| Photo/iCloud Extraction | `photo-icloud-extraction` | Ingestion pipeline done; limited-access UI + real coverage measurement open |
 | 3D Interactive Map | `add-3dmap` | In progress |
 | Q&A AI Agent | `q-and-a-ai-agent` | In progress |
 | Embedding Pipeline | `embedding-pipeline` | In progress |
