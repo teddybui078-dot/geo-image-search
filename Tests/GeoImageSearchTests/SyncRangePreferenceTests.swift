@@ -59,4 +59,20 @@ struct UserDefaultsSyncRangePreferenceStoreTests {
         store.setSelectedRange(.allPhotos)
         #expect(store.selectedRange() == .allPhotos)
     }
+
+    // Gap found in coverage audit: selectedRange()'s two branches are "no
+    // value stored" (tested above) and "parse the stored value" — only the
+    // successfully-parseable case was tested. A stale/renamed enum case
+    // left behind by an older app version must decode to nil, not crash or
+    // silently pick a default.
+    @Test("unrecognized stored raw value decodes to nil")
+    func returnsNilForUnrecognizedStoredValue() {
+        let suiteName = "com.geoimagesearch.tests.syncRange"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set("legacyRemovedCase", forKey: "com.geoimagesearch.selectedSyncDateRange")
+        let store = UserDefaultsSyncRangePreferenceStore(defaults: defaults)
+
+        #expect(store.selectedRange() == nil)
+    }
 }
