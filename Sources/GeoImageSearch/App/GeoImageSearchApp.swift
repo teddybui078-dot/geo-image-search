@@ -26,6 +26,7 @@ struct ContentView: View {
     @State private var onboardingRequirements: OnboardingRequirements?
 
     @State private var chatViewModel: ChatViewModel?
+    @State private var galleryViewModel: PhotoGalleryViewModel?
     @State private var photoStore: (any PhotoStore & Sendable)?
     @State private var photoQuery: (any PhotoQuery & Sendable)?
     @State private var storageError: String?
@@ -58,6 +59,9 @@ struct ContentView: View {
                 HSplitView {
                     VStack(spacing: 0) {
                         syncBar
+                        if let galleryViewModel {
+                            PhotoGalleryView(viewModel: galleryViewModel)
+                        }
                         if loadFailed {
                             GlobeFallbackView(onRetry: {
                                 loadFailed = false
@@ -119,6 +123,9 @@ struct ContentView: View {
             photoStore = store
             photoQuery = query
             chatViewModel = try await AppComposition.makeChatViewModel(query: query)
+            let gallery = PhotoGalleryViewModel(photoQuery: query, thumbnailFetching: PHPhotoThumbnailFetcher())
+            galleryViewModel = gallery
+            await gallery.load()
         } catch {
             storageError = error.localizedDescription
         }
@@ -138,6 +145,9 @@ struct ContentView: View {
             // Reloads GlobeView so it re-fetches allActivePhotosWithLocation()
             // and picks up whatever this sync just wrote.
             retryToken += 1
+            if let galleryViewModel {
+                await galleryViewModel.load()
+            }
         } catch {
             syncStatus = "Sync failed: \(error)"
         }
