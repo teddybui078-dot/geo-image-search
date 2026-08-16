@@ -35,7 +35,9 @@ let package = Package(
         .executableTarget(
             name: "GeoImageSearch",
             dependencies: ["CSQLite3", "CSQLiteVec"],
-            path: "Sources/GeoImageSearch"
+            path: "Sources/GeoImageSearch",
+            exclude: ["Embeddings/Tokenizer/LICENSE-CLIPTokenizer.txt"],
+            resources: [.copy("Resources/tokenizer.json")]
         ),
         .testTarget(
             name: "GeoImageSearchTests",

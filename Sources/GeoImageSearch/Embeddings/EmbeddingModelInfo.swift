@@ -17,6 +17,21 @@ enum EmbeddingModelInfo {
     static let contextLength = 77
     static let startOfTextTokenID: Int32 = 49406
     static let endOfTextTokenID: Int32 = 49407
+
+    // CLIPTokenizer.init(folder:) appends "tokenizer.json" itself, so this
+    // resolves to the bundled resource's containing directory, not the file.
+    // `Bundle.module` is only meaningful inside this target's own compiled
+    // module — this accessor exists so callers (including tests, via
+    // @testable import) never have to know that.
+    static var bundledTokenizerFolder: URL {
+        // SPM's .copy(...) flattens resources to the bundle root regardless
+        // of their source-tree path — "Resources/tokenizer.json" ends up at
+        // <bundle>/tokenizer.json, not <bundle>/Resources/tokenizer.json.
+        guard let tokenizerURL = Bundle.module.url(forResource: "tokenizer", withExtension: "json") else {
+            fatalError("tokenizer.json resource is missing from the GeoImageSearch bundle")
+        }
+        return tokenizerURL.deletingLastPathComponent()
+    }
 }
 
 // The two CoreML packages MobileCLIP-S2 ships as — see ModelProvisioning.
