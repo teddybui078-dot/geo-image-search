@@ -14,7 +14,7 @@ enum AppComposition {
 
     @MainActor
     static func makeChatViewModel() async throws -> ChatViewModel {
-        let query = try await openPhotoQuery()
+        let (_, query) = try await openPhotoStore()
         let keyStore = KeychainKeyStore()
         let openAIClient = OpenAIClient(apiKeyProvider: {
             guard let key = try keyStore.read(), !key.isEmpty else {
@@ -35,14 +35,19 @@ enum AppComposition {
         )
     }
 
-    private static func openPhotoQuery() async throws -> SQLitePhotoQuery {
-        let directory = try applicationSupportDirectory()
-        let path = directory.appendingPathComponent("geoimagesearch.sqlite").path
-        let (_, query) = try await SQLiteDatabase.open(atPath: path, embeddingDimension: placeholderEmbeddingDimension)
-        return query
+    // Shared with ContentView's manual "Sync Photo Library" trigger
+    // (TODOS.md item 6) so both point at the exact same database file —
+    // photo-icloud-extraction's ingestor and the chat agent's PhotoQuery
+    // independently invented their own path/filename before this branch
+    // merged main; a divergent path here would mean a sync is invisible to
+    // the agent (or vice versa), so this is the one place either caller
+    // should get it from.
+    static func openPhotoStore() async throws -> (store: SQLitePhotoStore, query: SQLitePhotoQuery) {
+        let path = try databaseURL().path
+        return try await SQLiteDatabase.open(atPath: path, embeddingDimension: placeholderEmbeddingDimension)
     }
 
-    private static func applicationSupportDirectory() throws -> URL {
+    static func databaseURL() throws -> URL {
         let base = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -51,6 +56,6 @@ enum AppComposition {
         )
         let directory = base.appendingPathComponent("GeoImageSearch", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory
+        return directory.appendingPathComponent("library.sqlite")
     }
 }
