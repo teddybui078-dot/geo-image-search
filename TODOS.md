@@ -43,8 +43,9 @@ Apple's system `libsqlite3` disables `sqlite3_auto_extension`, so the standard s
 - Chat UI wired to the agent, updates the globe on response
 
 ### 5. Embedding Pipeline (cross-cutting — feeds Database Structure, consumed by Q&A AI Agent)
+**Done (`embedding-pipeline` branch):**
 - ~~CoreML embedding model selection (MobileCLIP variant — dimension, tokenizer, license) — see item 5 below, gates the sqlite-vec schema~~ **Done** — see item 5 below for the decision and its rationale.
-- Background-queue, bounded-concurrency generation with visible progress and an optional date-range scope for first-run indexing — in progress on `embedding-pipeline`
+- ~~Background-queue, bounded-concurrency generation with visible progress and an optional date-range scope for first-run indexing~~ **Done** — `EmbeddingQueue` (`Sources/GeoImageSearch/Embeddings/`), a sliding-window bounded task group over `PhotoQuery.byDateRange`-sourced candidates, per-asset retry via a new `EmbeddingRetryPolicy`, an `@Observable` `EmbeddingProgress` plus a minimal SwiftUI view, writing through the real `PhotoStore.upsertEmbedding`. Not yet wired into a real app shell or an on-device model download UI trigger — `GeoImageSearchApp.swift` is still a placeholder, left for a later integration merge.
 
 ### 6. Error Handling (cross-cutting — spans Extraction, Database writes, and the Agent)
 **Done (`error-handling` branch):** `AppError`/`RetryPolicy`/`ErrorReporting` are implemented against CONTRACT.md's locked shapes.
