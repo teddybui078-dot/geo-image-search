@@ -49,15 +49,37 @@ struct PhotoLibraryIngestor {
     // caller should see that as an error, not a zero-count "success".
     // Per-asset geocoding failures are the one place this degrades instead
     // of aborting: see resolvedPlaceName below.
-    func run() async throws -> IngestResult {
+    //
+    // `dateRange`, unscoped by default (nil), mirrors EmbeddingQueue.run's
+    // existing "optional date-range scope" idiom (Embeddings/EmbeddingQueue.swift)
+    // rather than inventing a new shape. `progress`, if supplied, gets phase
+    // and per-asset updates so a SwiftUI view can show live sync status
+    // instead of a static "Syncing…" state — see SyncProgress.
+    func run(dateRange: ClosedRange<Date>? = nil, progress: SyncProgress? = nil) async throws -> IngestResult {
+        // Wraps a storage-boundary call so any throw both fails `progress`
+        // with a consistent message and rethrows — factors out what were
+        // three identical do/catch/fail/rethrow blocks below (found in
+        // review: maintainability specialist). A nested function so it can
+        // capture `progress` directly instead of threading it through.
+        func failingStorage<T>(_ body: () async throws -> T) async throws -> T {
+            do {
+                return try await body()
+            } catch {
+                await progress?.fail(Self.failureMessage(for: error))
+                throw error
+            }
+        }
+
         let access = await permissionManager.requestAccess()
         guard access.isGranted else {
             errorReporter.report(.photosPermissionDenied, context: "PhotoLibraryIngestor.run")
+            await progress?.fail(AppError.photosPermissionDenied.logDescription)
             throw AppError.photosPermissionDenied
         }
 
+        await progress?.setPhase(.fetchingLibrary)
         let fetcher = self.fetcher // avoid capturing non-Sendable `self` in the @Sendable closure below
-        let snapshots: [PhotoAssetSnapshot]
+        var snapshots: [PhotoAssetSnapshot]
         do {
             snapshots = try await RetryExecutor.run(policy: PhotosRetryPolicy()) {
                 try fetcher.fetchAllPhotoAssetSnapshots()
@@ -65,18 +87,35 @@ struct PhotoLibraryIngestor {
         } catch {
             let appError = (error as? AppError) ?? .photosFetchFailed(underlying: error)
             errorReporter.report(appError, context: "PhotoLibraryIngestor.run.fetch")
+            await progress?.fail(appError.logDescription)
             throw appError
+        }
+
+        // A scoped sync only ever considers assets inside the chosen
+        // window — an asset with no creationDate can't be confirmed to
+        // belong in it, so it's excluded here (but still included whenever
+        // dateRange is nil, matching the unscoped behavior exactly).
+        if let dateRange {
+            snapshots = snapshots.filter { $0.creationDate.map(dateRange.contains) ?? false }
         }
 
         let coverage = GPSCoverageReport.measure(snapshots)
         // PhotoStore/PhotoQuery failures propagate untouched — they're
         // SQLiteError, not AppError; CONTRACT.md's AppError cases cover the
         // Photos/CLGeocoder/LLM/embedding/webview boundaries, not storage.
-        let storedIdentifiers = try await query.allActiveIdentifiers()
+        // failingStorage still fails `progress` here (found in review:
+        // maintainability specialist) so a caller reading only
+        // PhotoLibraryIngestor sees a complete fail-on-every-throw
+        // contract, matching the permission and fetch paths above and the
+        // upsert/markDeleted calls below — PhotoLibraryIngestor itself is
+        // the only place that reports to `progress` now (ContentView no
+        // longer re-fails it).
+        let storedIdentifiers = try await failingStorage { try await query.allActiveIdentifiers() }
 
         let now = Date()
         let plan = SyncPlanner.plan(librarySnapshots: snapshots, storedIdentifiers: storedIdentifiers)
 
+        await progress?.start(total: plan.toUpsert.count)
         var upsertedCount = 0
         for start in stride(from: 0, to: plan.toUpsert.count, by: batchSize) {
             let end = min(start + batchSize, plan.toUpsert.count)
@@ -86,8 +125,9 @@ struct PhotoLibraryIngestor {
                 let existingPlaceName = storedIdentifiers[snapshot.localIdentifier]?.placeName
                 let placeName = await resolvedPlaceName(for: snapshot, existingPlaceName: existingPlaceName)
                 assets.append(snapshot.toPhotoAsset(placeName: placeName, now: now))
+                await progress?.recordProgress()
             }
-            try await store.upsert(assets)
+            try await failingStorage { try await store.upsert(assets) }
             upsertedCount += assets.count
         }
 
@@ -100,20 +140,33 @@ struct PhotoLibraryIngestor {
         // the moment access is downgraded from full to limited. Only a
         // full-access sync can safely prune; skip deletions entirely while
         // limited. (Found in review: Codex + independent Claude subagent
-        // both flagged this as a silent-data-loss path.)
+        // both flagged this as a silent-data-loss path.) A scoped
+        // `dateRange` sync is the same shape of problem — a stored id
+        // missing from a *scoped* fresh enumeration might just be outside
+        // the chosen window, not actually gone from the library — so
+        // deletions are skipped there too.
         var deletedCount = 0
-        if !access.isLimitedAccess, !plan.idsToMarkDeleted.isEmpty {
-            try await store.markDeleted(ids: plan.idsToMarkDeleted)
+        if !access.isLimitedAccess, dateRange == nil, !plan.idsToMarkDeleted.isEmpty {
+            try await failingStorage { try await store.markDeleted(ids: plan.idsToMarkDeleted) }
             deletedCount = plan.idsToMarkDeleted.count
         }
 
-        return IngestResult(
+        let result = IngestResult(
             isLimitedAccess: access.isLimitedAccess,
             totalLibraryAssets: snapshots.count,
             gpsCoverage: coverage,
             upsertedCount: upsertedCount,
             deletedCount: deletedCount
         )
+        await progress?.finish(result)
+        return result
+    }
+
+    // Shared formatting for the three storage-boundary throw paths above —
+    // found in review (maintainability specialist): the literal was
+    // duplicated three times with nothing keeping them in sync.
+    private static func failureMessage(for error: Error) -> String {
+        "Sync failed: \(error)"
     }
 
     // Geocoding already retried internally against GeocodingRetryPolicy

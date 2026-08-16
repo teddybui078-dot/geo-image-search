@@ -25,6 +25,8 @@ struct ContentView: View {
 
     @State private var onboardingRequirements: OnboardingRequirements?
 
+    private let syncRangeStore: any SyncRangePreferenceStoring = UserDefaultsSyncRangePreferenceStore()
+
     @State private var chatViewModel: ChatViewModel?
     @State private var galleryViewModel: PhotoGalleryViewModel?
     @State private var photoStore: (any PhotoStore & Sendable)?
@@ -32,8 +34,10 @@ struct ContentView: View {
     @State private var storageError: String?
     @State private var loadFailed = false
     @State private var retryToken = 0
-    @State private var syncStatus = "Not synced yet."
+    @State private var syncProgress = SyncProgress()
     @State private var isSyncing = false
+    @State private var syncRangeOption: SyncDateRangeOption?
+    @State private var isPickingSyncRange = false
 
     var body: some View {
         Group {
@@ -84,11 +88,20 @@ struct ContentView: View {
         }
         .frame(minWidth: 900, minHeight: 480)
         .task {
+            syncRangeOption = syncRangeStore.selectedRange()
             let requirements = resolveOnboardingRequirements()
             onboardingRequirements = requirements
             if requirements.isComplete {
                 await bootstrap()
             }
+        }
+        .sheet(isPresented: $isPickingSyncRange) {
+            SyncRangePickerView(onSelect: { option in
+                syncRangeOption = option
+                syncRangeStore.setSelectedRange(option)
+                isPickingSyncRange = false
+                Task { await runIngestion() }
+            })
         }
     }
 
@@ -98,11 +111,17 @@ struct ContentView: View {
 
     private var syncBar: some View {
         HStack {
-            Text(syncStatus)
+            SyncProgressView(progress: syncProgress)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
             Spacer()
+            if syncRangeOption != nil {
+                Button("Change range") {
+                    isPickingSyncRange = true
+                }
+                .disabled(isSyncing)
+            }
             // Manual trigger for TODOS.md item 6: validate real GPS coverage
             // % against the user's own library. No polished onboarding UI
             // yet — this exists so that number can actually be measured by
@@ -110,11 +129,23 @@ struct ContentView: View {
             // neither of which carries the Photos entitlement) against a
             // real library.
             Button(isSyncing ? "Syncing…" : "Sync Photo Library") {
-                Task { await runIngestion() }
+                requestSync()
             }
             .disabled(isSyncing)
         }
         .padding(8)
+    }
+
+    // Prompts for a date range on the very first sync (persisted choice is
+    // reused on every later sync); already-chosen ranges skip straight to
+    // syncing. SyncRangePickerView's onSelect kicks off the actual
+    // runIngestion() call once a choice is made.
+    private func requestSync() {
+        if syncRangeOption == nil {
+            isPickingSyncRange = true
+        } else {
+            Task { await runIngestion() }
+        }
     }
 
     private func bootstrap() async {
@@ -136,12 +167,9 @@ struct ContentView: View {
         isSyncing = true
         defer { isSyncing = false }
         do {
-            let result = try await PhotoLibraryIngestor(store: photoStore, query: photoQuery, errorReporter: errorReporter).run()
-            syncStatus = """
-            Synced \(result.totalLibraryAssets) photos — \(result.upsertedCount) written, \(result.deletedCount) removed. \
-            GPS coverage: \(String(format: "%.1f", result.gpsCoverage.coveragePercent))% (\(result.gpsCoverage.assetsWithGPS)/\(result.gpsCoverage.totalAssets))\
-            \(result.isLimitedAccess ? " — ⚠️ limited Photos access, only a subset of the library is visible." : "")
-            """
+            let dateRange = syncRangeOption?.dateRange(now: Date())
+            _ = try await PhotoLibraryIngestor(store: photoStore, query: photoQuery, errorReporter: errorReporter)
+                .run(dateRange: dateRange, progress: syncProgress)
             // Reloads GlobeView so it re-fetches allActivePhotosWithLocation()
             // and picks up whatever this sync just wrote.
             retryToken += 1
@@ -149,7 +177,13 @@ struct ContentView: View {
                 await galleryViewModel.load()
             }
         } catch {
-            syncStatus = "Sync failed: \(error)"
+            // run() already fails syncProgress with a specific message on
+            // every one of its throw paths before rethrowing — re-failing
+            // it here with a generic "\(error)" would silently overwrite
+            // that message with a worse one. Found in review
+            // (maintainability specialist): this catch previously did
+            // exactly that, making the ingestor's own progress-fail work
+            // invisible to the actual app UI.
         }
     }
 }
