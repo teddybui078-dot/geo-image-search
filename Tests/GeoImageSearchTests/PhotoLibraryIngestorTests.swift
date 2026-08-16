@@ -199,6 +199,68 @@ import Foundation
         #expect(result.upsertedCount == 1)
         #expect(reporter.reported.contains { $0.context == "PhotoLibraryIngestor.resolvedPlaceName" })
     }
+
+    @Test func dateRangeScopeExcludesAssetsOutsideRange() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        let inRange = Date(timeIntervalSince1970: 1_700_000_000)
+        let outOfRange = Date(timeIntervalSince1970: 1_000_000_000)
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .authorized)),
+            fetcher: SerialFakeFetcher(results: [
+                .success([snapshot("recent", date: inRange), snapshot("old", date: outOfRange)])
+            ]),
+            geocoder: FakeReverseGeocoder(placeNamesByCoordinate: [:])
+        )
+
+        let result = try await ingestor.run(
+            dateRange: Date(timeIntervalSince1970: 1_500_000_000)...Date(timeIntervalSince1970: 2_000_000_000)
+        )
+
+        #expect(result.upsertedCount == 1)
+        let identifiers = try await query.allActiveIdentifiers()
+        #expect(Set(identifiers.keys) == ["recent"])
+    }
+
+    // Regression: narrowing the date range must never soft-delete photos
+    // previously synced from outside the new, narrower window — the fresh,
+    // scoped enumeration not containing them isn't evidence they're gone
+    // from the library, same reasoning as the limited-access guard above.
+    @Test func dateRangeScopeSkipsDeletionsEvenWhenAssetsAreMissing() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        try await store.upsert([PhotoAssetFixtures.makeAsset(id: "outside-range")])
+
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .authorized)),
+            // The scoped fetch doesn't include "outside-range" at all.
+            fetcher: SerialFakeFetcher(results: [.success([snapshot("in-range")])]),
+            geocoder: FakeReverseGeocoder(placeNamesByCoordinate: [:])
+        )
+
+        let result = try await ingestor.run(
+            dateRange: Date(timeIntervalSince1970: 0)...Date(timeIntervalSince1970: 2_000_000_000)
+        )
+
+        #expect(result.deletedCount == 0)
+        let identifiers = try await query.allActiveIdentifiers()
+        #expect(identifiers.keys.contains("outside-range"))
+    }
+
+    @Test @MainActor func progressReporterReceivesUpdatesDuringRun() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        let progress = SyncProgress()
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .authorized)),
+            fetcher: SerialFakeFetcher(results: [.success([snapshot("a"), snapshot("b")])]),
+            geocoder: FakeReverseGeocoder(placeNamesByCoordinate: [:])
+        )
+
+        let result = try await ingestor.run(progress: progress)
+
+        #expect(progress.phase == .finished(result))
+    }
 }
 
 private struct TestError: Error {}

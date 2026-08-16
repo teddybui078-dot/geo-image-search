@@ -49,15 +49,23 @@ struct PhotoLibraryIngestor {
     // caller should see that as an error, not a zero-count "success".
     // Per-asset geocoding failures are the one place this degrades instead
     // of aborting: see resolvedPlaceName below.
-    func run() async throws -> IngestResult {
+    //
+    // `dateRange`, unscoped by default (nil), mirrors EmbeddingQueue.run's
+    // existing "optional date-range scope" idiom (Embeddings/EmbeddingQueue.swift)
+    // rather than inventing a new shape. `progress`, if supplied, gets phase
+    // and per-asset updates so a SwiftUI view can show live sync status
+    // instead of a static "Syncing…" state — see SyncProgress.
+    func run(dateRange: ClosedRange<Date>? = nil, progress: SyncProgress? = nil) async throws -> IngestResult {
         let access = await permissionManager.requestAccess()
         guard access.isGranted else {
             errorReporter.report(.photosPermissionDenied, context: "PhotoLibraryIngestor.run")
+            await progress?.fail(AppError.photosPermissionDenied.logDescription)
             throw AppError.photosPermissionDenied
         }
 
+        await progress?.setPhase(.fetchingLibrary)
         let fetcher = self.fetcher // avoid capturing non-Sendable `self` in the @Sendable closure below
-        let snapshots: [PhotoAssetSnapshot]
+        var snapshots: [PhotoAssetSnapshot]
         do {
             snapshots = try await RetryExecutor.run(policy: PhotosRetryPolicy()) {
                 try fetcher.fetchAllPhotoAssetSnapshots()
@@ -65,7 +73,16 @@ struct PhotoLibraryIngestor {
         } catch {
             let appError = (error as? AppError) ?? .photosFetchFailed(underlying: error)
             errorReporter.report(appError, context: "PhotoLibraryIngestor.run.fetch")
+            await progress?.fail(appError.logDescription)
             throw appError
+        }
+
+        // A scoped sync only ever considers assets inside the chosen
+        // window — an asset with no creationDate can't be confirmed to
+        // belong in it, so it's excluded here (but still included whenever
+        // dateRange is nil, matching the unscoped behavior exactly).
+        if let dateRange {
+            snapshots = snapshots.filter { $0.creationDate.map(dateRange.contains) ?? false }
         }
 
         let coverage = GPSCoverageReport.measure(snapshots)
@@ -77,6 +94,7 @@ struct PhotoLibraryIngestor {
         let now = Date()
         let plan = SyncPlanner.plan(librarySnapshots: snapshots, storedIdentifiers: storedIdentifiers)
 
+        await progress?.start(total: plan.toUpsert.count)
         var upsertedCount = 0
         for start in stride(from: 0, to: plan.toUpsert.count, by: batchSize) {
             let end = min(start + batchSize, plan.toUpsert.count)
@@ -86,6 +104,7 @@ struct PhotoLibraryIngestor {
                 let existingPlaceName = storedIdentifiers[snapshot.localIdentifier]?.placeName
                 let placeName = await resolvedPlaceName(for: snapshot, existingPlaceName: existingPlaceName)
                 assets.append(snapshot.toPhotoAsset(placeName: placeName, now: now))
+                await progress?.recordProgress()
             }
             try await store.upsert(assets)
             upsertedCount += assets.count
@@ -100,20 +119,26 @@ struct PhotoLibraryIngestor {
         // the moment access is downgraded from full to limited. Only a
         // full-access sync can safely prune; skip deletions entirely while
         // limited. (Found in review: Codex + independent Claude subagent
-        // both flagged this as a silent-data-loss path.)
+        // both flagged this as a silent-data-loss path.) A scoped
+        // `dateRange` sync is the same shape of problem — a stored id
+        // missing from a *scoped* fresh enumeration might just be outside
+        // the chosen window, not actually gone from the library — so
+        // deletions are skipped there too.
         var deletedCount = 0
-        if !access.isLimitedAccess, !plan.idsToMarkDeleted.isEmpty {
+        if !access.isLimitedAccess, dateRange == nil, !plan.idsToMarkDeleted.isEmpty {
             try await store.markDeleted(ids: plan.idsToMarkDeleted)
             deletedCount = plan.idsToMarkDeleted.count
         }
 
-        return IngestResult(
+        let result = IngestResult(
             isLimitedAccess: access.isLimitedAccess,
             totalLibraryAssets: snapshots.count,
             gpsCoverage: coverage,
             upsertedCount: upsertedCount,
             deletedCount: deletedCount
         )
+        await progress?.finish(result)
+        return result
     }
 
     // Geocoding already retried internally against GeocodingRetryPolicy
