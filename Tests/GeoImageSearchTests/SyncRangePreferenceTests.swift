@@ -32,6 +32,17 @@ import Foundation
         let expectedStart = Calendar(identifier: .gregorian).date(from: components)
         #expect(range.lowerBound == expectedStart)
     }
+
+    // Gap found in coverage audit: displayName is what SyncRangePickerView
+    // actually renders as button labels, but no test asserted its mapping
+    // for any case — a typo or case fallthrough regression would only ever
+    // surface visually, in a view this repo can't exercise via `swift test`.
+    @Test func displayNameMatchesEachCase() {
+        #expect(SyncDateRangeOption.last30Days.displayName == "Last 30 days")
+        #expect(SyncDateRangeOption.since2025.displayName == "Since 2025")
+        #expect(SyncDateRangeOption.since2023.displayName == "Since 2023")
+        #expect(SyncDateRangeOption.allPhotos.displayName == "All photos")
+    }
 }
 
 // .serialized: both tests share one UserDefaults suite name, so they can't
