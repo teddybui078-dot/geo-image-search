@@ -89,7 +89,18 @@ struct PhotoLibraryIngestor {
         // PhotoStore/PhotoQuery failures propagate untouched — they're
         // SQLiteError, not AppError; CONTRACT.md's AppError cases cover the
         // Photos/CLGeocoder/LLM/embedding/webview boundaries, not storage.
-        let storedIdentifiers = try await query.allActiveIdentifiers()
+        // Still fails `progress` here (found in review: maintainability
+        // specialist) so a caller reading only PhotoLibraryIngestor sees a
+        // complete fail-on-every-throw contract, matching the permission
+        // and fetch paths above — not dead code even though ContentView's
+        // own catch also fails progress afterward with a generic message.
+        let storedIdentifiers: [String: StoredPhotoIdentity]
+        do {
+            storedIdentifiers = try await query.allActiveIdentifiers()
+        } catch {
+            await progress?.fail("Sync failed: \(error)")
+            throw error
+        }
 
         let now = Date()
         let plan = SyncPlanner.plan(librarySnapshots: snapshots, storedIdentifiers: storedIdentifiers)
@@ -106,7 +117,12 @@ struct PhotoLibraryIngestor {
                 assets.append(snapshot.toPhotoAsset(placeName: placeName, now: now))
                 await progress?.recordProgress()
             }
-            try await store.upsert(assets)
+            do {
+                try await store.upsert(assets)
+            } catch {
+                await progress?.fail("Sync failed: \(error)")
+                throw error
+            }
             upsertedCount += assets.count
         }
 
@@ -126,7 +142,12 @@ struct PhotoLibraryIngestor {
         // deletions are skipped there too.
         var deletedCount = 0
         if !access.isLimitedAccess, dateRange == nil, !plan.idsToMarkDeleted.isEmpty {
-            try await store.markDeleted(ids: plan.idsToMarkDeleted)
+            do {
+                try await store.markDeleted(ids: plan.idsToMarkDeleted)
+            } catch {
+                await progress?.fail("Sync failed: \(error)")
+                throw error
+            }
             deletedCount = plan.idsToMarkDeleted.count
         }
 
