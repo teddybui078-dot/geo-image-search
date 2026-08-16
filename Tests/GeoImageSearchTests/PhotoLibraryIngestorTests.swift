@@ -261,6 +261,59 @@ import Foundation
 
         #expect(progress.phase == .finished(result))
     }
+
+    // Gap found in coverage audit: permission-denial's `progress?.fail(...)`
+    // call was added by this diff but every existing denied-access test
+    // calls run() without a progress reporter, so the optional-chain no-ops
+    // and this line never actually executes under test.
+    @Test @MainActor func deniedAccessWithProgressSetsFailedPhase() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        let progress = SyncProgress()
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .denied)),
+            fetcher: SerialFakeFetcher(results: [.success([snapshot("a")])]),
+            geocoder: FakeReverseGeocoder(placeNamesByCoordinate: [:])
+        )
+
+        var thrownError: Error?
+        do {
+            _ = try await ingestor.run(progress: progress)
+        } catch {
+            thrownError = error
+        }
+        #expect(thrownError is AppError)
+        #expect(progress.phase == .failed(AppError.photosPermissionDenied.logDescription))
+    }
+
+    // Gap found in coverage audit: the code comment on the dateRange filter
+    // explicitly calls out that a creationDate-less asset "can't be
+    // confirmed to belong" in a scoped window and is excluded — but no test
+    // exercised a snapshot with a nil creationDate under an active scope.
+    @Test func dateRangeScopeExcludesSnapshotsWithNilCreationDate() async throws {
+        let (store, query) = try await TestDatabase.makeStoreAndQuery()
+        let inRangeDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let undated = PhotoAssetSnapshot(
+            localIdentifier: "undated",
+            latitude: 48.8566, longitude: 2.3522,
+            creationDate: nil, modificationDate: nil,
+            isLivePhoto: false
+        )
+        let ingestor = PhotoLibraryIngestor(
+            store: store, query: query,
+            permissionManager: FakePhotosAuthorizing(status: PhotosAccessStatus(authorizationStatus: .authorized)),
+            fetcher: SerialFakeFetcher(results: [.success([snapshot("recent", date: inRangeDate), undated])]),
+            geocoder: FakeReverseGeocoder(placeNamesByCoordinate: [:])
+        )
+
+        let result = try await ingestor.run(
+            dateRange: Date(timeIntervalSince1970: 1_500_000_000)...Date(timeIntervalSince1970: 2_000_000_000)
+        )
+
+        #expect(result.upsertedCount == 1)
+        let identifiers = try await query.allActiveIdentifiers()
+        #expect(Set(identifiers.keys) == ["recent"])
+    }
 }
 
 private struct TestError: Error {}
