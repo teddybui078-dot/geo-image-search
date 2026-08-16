@@ -13,7 +13,7 @@ A personal tool that pulls photos from your own macOS Photos library / iCloud (v
 
 V1 is photos-only (see Premise 4 and the note under Constraints on video). The Greece/Europe example queries are the eventual full vision, including video; for v1 they resolve against photos only.
 
-This is a personal project, not a product. Distribution is not a goal today; open-sourcing it later is likely, so the code should stay reasonably clean, but no packaging or onboarding flow is needed yet.
+This is a personal project, not a product. Distribution is not a goal today; open-sourcing it later is likely, so the code should stay reasonably clean, but no packaging is needed yet. **Amended 2026-08-16:** v1 does now ship a minimal first-run onboarding flow (Photos access, OpenAI API key, agent tone) — the "no onboarding" call above was about a polished, stranger-facing installer flow, not about the app's own first-launch setup, which turned out to matter even for a single user staring at an empty window.
 
 ## What Makes This Cool
 
@@ -24,12 +24,12 @@ The person you're building this for first is yourself, reliving trips — but yo
 ## Constraints
 
 - macOS only for v1 (native Photos/iCloud permission access via PhotosKit/Photos framework — not a folder picker, not an upload flow).
-- Solo builder, personal use first, family second. No multi-user auth, no billing, no stranger-facing onboarding.
+- Solo builder, personal use first, family second. No multi-user auth, no billing, no stranger-facing distribution onboarding (a minimal first-run setup flow for the solo user themselves shipped 2026-08-16 — see Premises).
 - No firm deadline — the builder explicitly has "plenty of time" and wants to write real code for the ingestion pipeline and the globe rendering, not just wire up existing tools.
 - Likely open-sourced eventually, so architecture and code quality matter more than they would for a pure throwaway prototype.
 - V1 indexes photos only. Video files are visible in the library scan but their GPS/timestamp metadata is not extracted or indexed in v1 — full video ingestion is deferred (Premise 4). Live Photos are indexed as ordinary photos (image component only; the attached motion/video component is ignored in v1).
 - iCloud-only assets (not fully downloaded to the Mac) are a real constraint: requesting full-resolution originals for a large library over the network is slow and storage-heavy. V1 ingestion should request only metadata/location (available without downloading the original) for indexing, and defer full-resolution fetch to on-demand thumbnailing when a photo is actually viewed.
-- V1 assumes full Photos library access is granted. macOS also allows granting only a "Selected Photos" subset — if the user picks limited access, v1 indexes whatever subset it's given and does not prompt or explain the gap; handling that properly is deferred.
+- V1 assumes full Photos library access is granted. macOS also allows granting only a "Selected Photos" subset — if the user picks limited access, v1 indexes whatever subset it's given; the onboarding flow now explains what's being requested and why before prompting (TODOS.md item 6), but does not yet warn separately if the user chooses the limited option specifically.
 - Designed for a personal library on the order of tens of thousands of photos (~50k), not a shared or professional-scale archive — this bounds the feasibility of per-photo reverse geocoding and embedding generation below.
 - Family use means someone else operating the builder's own Mac/session, not a separate account or login — consistent with "no multi-user auth" above.
 
@@ -39,7 +39,7 @@ The person you're building this for first is yourself, reliving trips — but yo
 2. V1 = real macOS Photos/iCloud permission grant → EXIF/GPS extraction → interactive 3D globe with pins → AI chat agent answering natural-language questions, all from day one (not deferred to a later phase).
 3. Photo ingestion (EXIF parsing, permission flow, thumbnailing) is being built from scratch, not delegated to an existing tool like Immich — a deliberate choice, made knowing it duplicates solved open-source work, because building it is part of the fun and the learning.
 4. Video support, auto-generated trip stories/recaps, and shared/social family maps are explicitly deferred past v1 — they're the confirmed 10x roadmap, not now.
-5. No distribution/packaging needed now; code should stay reasonably clean since open-sourcing later is likely, but no installers or onboarding flows needed yet.
+5. No distribution/packaging needed now; code should stay reasonably clean since open-sourcing later is likely, but no installers needed yet. (Amended 2026-08-16: a minimal first-run onboarding flow — Photos access, API key, agent tone — was added; "no onboarding" here always meant no installer/distribution-grade onboarding, not the app's own first-launch setup.)
 6. The AI agent is a real tool-calling agent from day one, not a narrow keyword/date parser standing in for one — confirmed explicitly after independent pushback on this exact point (see Cross-Model Perspective below).
 7. Photos with no GPS data (screenshots, location-services-off shots, older imports) are still indexed for date and semantic search, but are excluded from globe pins — there's nowhere to plot them.
 8. `cluster_trips` (grouping pins by time+proximity to answer a query, e.g. "my Greece trip") is v1 scope. Turning those clusters into a written narrative/recap (Premise 4's "auto-generated trip stories") is not — `cluster_trips` returns structured groups for the agent to answer with, it does not generate prose.

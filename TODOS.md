@@ -104,6 +104,8 @@ Surfaced during `/plan-eng-review` (2026-08-09), sourced from the Codex outside-
 
 **Depends on / blocked by:** Keychain storage implementation (Issue 2, decided).
 
+**Status (onboarding-flow branch, 2026-08-16):** Keychain storage now exists (`Sources/GeoImageSearch/Onboarding/APIKeyStore.swift`) and the onboarding flow prompts for the key on first launch, with an explicit "Skip for now" so a missing key is a normal, expected state rather than a broken one. Still open: validation on entry (currently just non-empty), rotation, and quota-exhaustion handling — all explicitly deferred above to Next Step 5's chat UI, which is still unbuilt (`q-and-a-ai-agent` not yet merged to `main`).
+
 ## 4. Privacy posture for LLM queries
 
 **What:** Document what leaves the device when the agent runs — natural-language questions (which may reference trip/family/location details) are sent to a third-party LLM API. Once open-sourced, other users inherit the same tradeoff with their own API key.
@@ -146,4 +148,6 @@ Surfaced during `/plan-eng-review` (2026-08-09), sourced from the Codex outside-
 
 **Depends on / blocked by:** Next Step 1 (PhotosKit permission flow) must exist to measure this.
 
-**Status (photo-icloud-extraction branch):** the measurement mechanism exists (`GPSCoverageReport`, surfaced via the app's "Sync Photo Library" button) but hasn't been run against a real library yet — this build environment can't grant Photos access (`swift build`/`swift test` lack the entitlement a full Xcode build applies). Limited-access is detected and surfaced (`PhotosAccessStatus.isLimitedAccess` → a warning in the synced result), and the destructive side (silently soft-deleting photos outside the current selection) is fixed — but there's still no dedicated prompt/explanation UI, a real gap, not a solved one. Both the coverage number and the UI need a real Mac with a real library and an Xcode build to close out.
+**Status (photo-icloud-extraction branch):** the measurement mechanism exists (`GPSCoverageReport`, surfaced via the app's "Sync Photo Library" button) but hasn't been run against a real library yet — this build environment can't grant Photos access (`swift build`/`swift test` lack the entitlement a full Xcode build applies). Limited-access is detected and surfaced (`PhotosAccessStatus.isLimitedAccess` → a warning in the synced result), and the destructive side (silently soft-deleting photos outside the current selection) is fixed. Both the coverage number and a real-library validation pass still need a real Mac with a real library and an Xcode build to close out.
+
+**Status (onboarding-flow branch, 2026-08-16):** the "no dedicated prompt/explanation UI" gap above is now partially closed — `Sources/GeoImageSearch/Onboarding/PhotosAccessStepView.swift` explains what's being requested and why *before* the system prompt fires, and re-shows on every launch until access is actually granted (`OnboardingRequirementsResolver`). Still open: no separate explanation if the user specifically picks the "Selected Photos" limited option over full access — it's granted the same as full access today, no distinct messaging about the coverage gap that implies.
