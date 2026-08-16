@@ -1,10 +1,8 @@
 import SwiftUI
-import AppKit
 
 struct PhotosAccessStepView: View {
     let deniedMessage: String?
     let onRequestAccess: @Sendable () async -> Void
-    let onCheckAgain: () -> Void
 
     var body: some View {
         VStack(spacing: 16) {
@@ -23,14 +21,10 @@ struct PhotosAccessStepView: View {
                 Text(deniedMessage)
                     .font(.callout)
                     .foregroundStyle(.red)
-                // macOS only re-prompts once per app; after a denial the user
-                // has to flip it in System Settings themselves.
-                Button("Open System Settings") {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Photos") {
-                        NSWorkspace.shared.open(url)
-                    }
+                Button("Try Again") {
+                    Task { await onRequestAccess() }
                 }
-                Button("Check Again", action: onCheckAgain)
+                .buttonStyle(.borderedProminent)
             } else {
                 Button("Allow Photos Access") {
                     Task { await onRequestAccess() }

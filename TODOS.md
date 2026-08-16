@@ -106,7 +106,7 @@ Surfaced during `/plan-eng-review` (2026-08-09), sourced from the Codex outside-
 
 **Depends on / blocked by:** Keychain storage implementation (Issue 2, decided).
 
-**Status:** Done via `q-and-a-ai-agent` (merged) — `KeychainKeyStore`/`APIKeyManager` (`Sources/GeoImageSearch/Agent/APIKeyStore.swift`) cover validation on entry, rotation, and a missing/invalid/quotaExhausted state, surfaced in `ChatView`'s key-entry banner. The onboarding flow (`onboarding-flow` branch) originally added a second, weaker Keychain entry point for the key here too, before either branch was aware of the other — removed in favor of the one `ChatView` already owns, so onboarding only covers welcome, agent tone, and Photos access.
+**Status:** Done via `q-and-a-ai-agent` (merged) — `KeychainKeyStore`/`APIKeyManager` (`Sources/GeoImageSearch/Agent/APIKeyStore.swift`) cover validation on entry, rotation, and a missing/invalid/quotaExhausted state, surfaced in `ChatView`'s key-entry banner. The onboarding flow (`onboarding-flow` branch) initially built a second, weaker Keychain entry point before either branch was aware of the other; that was retired in favor of a shared `AppComposition.makeAPIKeyManager()` factory, so onboarding's own API key step (with a "Skip for now" — a missing key is still a normal, expected state) and `ChatView`'s key-entry banner now read and write the exact same Keychain entry.
 
 ## 4. Privacy posture for LLM queries
 

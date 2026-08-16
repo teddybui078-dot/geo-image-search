@@ -19,6 +19,7 @@ struct ContentView: View {
     private let errorReporter: any ErrorReporting = ErrorReporter()
 
     private let onboardingProgress: any OnboardingProgressStoring = UserDefaultsOnboardingProgressStore()
+    private let apiKeyManager = AppComposition.makeAPIKeyManager()
     private let agentPreferencesStore: any AgentPreferencesStoring = UserDefaultsAgentPreferencesStore()
     private let photosAuthorizing: any PhotosAuthorizing = PhotosPermissionManager()
 
@@ -39,6 +40,7 @@ struct ContentView: View {
                 OnboardingView(
                     requirements: onboardingRequirements,
                     progress: onboardingProgress,
+                    apiKeyManager: apiKeyManager,
                     preferencesStore: agentPreferencesStore,
                     photosAuthorizing: photosAuthorizing,
                     onComplete: {
