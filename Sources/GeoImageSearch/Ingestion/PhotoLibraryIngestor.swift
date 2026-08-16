@@ -92,13 +92,13 @@ struct PhotoLibraryIngestor {
         // Still fails `progress` here (found in review: maintainability
         // specialist) so a caller reading only PhotoLibraryIngestor sees a
         // complete fail-on-every-throw contract, matching the permission
-        // and fetch paths above — not dead code even though ContentView's
-        // own catch also fails progress afterward with a generic message.
+        // and fetch paths above — this is the only place that reports the
+        // failure to `progress` (ContentView no longer re-fails it).
         let storedIdentifiers: [String: StoredPhotoIdentity]
         do {
             storedIdentifiers = try await query.allActiveIdentifiers()
         } catch {
-            await progress?.fail("Sync failed: \(error)")
+            await progress?.fail(Self.failureMessage(for: error))
             throw error
         }
 
@@ -120,7 +120,7 @@ struct PhotoLibraryIngestor {
             do {
                 try await store.upsert(assets)
             } catch {
-                await progress?.fail("Sync failed: \(error)")
+                await progress?.fail(Self.failureMessage(for: error))
                 throw error
             }
             upsertedCount += assets.count
@@ -145,7 +145,7 @@ struct PhotoLibraryIngestor {
             do {
                 try await store.markDeleted(ids: plan.idsToMarkDeleted)
             } catch {
-                await progress?.fail("Sync failed: \(error)")
+                await progress?.fail(Self.failureMessage(for: error))
                 throw error
             }
             deletedCount = plan.idsToMarkDeleted.count
@@ -160,6 +160,13 @@ struct PhotoLibraryIngestor {
         )
         await progress?.finish(result)
         return result
+    }
+
+    // Shared formatting for the three storage-boundary throw paths above —
+    // found in review (maintainability specialist): the literal was
+    // duplicated three times with nothing keeping them in sync.
+    private static func failureMessage(for error: Error) -> String {
+        "Sync failed: \(error)"
     }
 
     // Geocoding already retried internally against GeocodingRetryPolicy

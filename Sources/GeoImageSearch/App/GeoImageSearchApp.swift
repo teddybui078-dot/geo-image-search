@@ -167,7 +167,13 @@ struct ContentView: View {
             // and picks up whatever this sync just wrote.
             retryToken += 1
         } catch {
-            syncProgress.fail("Sync failed: \(error)")
+            // run() already fails syncProgress with a specific message on
+            // every one of its throw paths before rethrowing — re-failing
+            // it here with a generic "\(error)" would silently overwrite
+            // that message with a worse one. Found in review
+            // (maintainability specialist): this catch previously did
+            // exactly that, making the ingestor's own progress-fail work
+            // invisible to the actual app UI.
         }
     }
 }
