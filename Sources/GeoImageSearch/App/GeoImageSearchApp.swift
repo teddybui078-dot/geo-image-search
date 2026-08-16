@@ -17,6 +17,13 @@ struct GeoImageSearchApp: App {
 struct ContentView: View {
     private let errorReporter: any ErrorReporting = ErrorReporter()
 
+    private let onboardingProgress: any OnboardingProgressStoring = UserDefaultsOnboardingProgressStore()
+    private let apiKeyStore: any APIKeyStoring = KeychainAPIKeyStore()
+    private let agentPreferencesStore: any AgentPreferencesStoring = UserDefaultsAgentPreferencesStore()
+    private let photosAuthorizing: any PhotosAuthorizing = PhotosPermissionManager()
+
+    @State private var onboardingRequirements: OnboardingRequirements?
+
     @State private var photoStore: (any PhotoStore & Sendable)?
     @State private var photoQuery: (any PhotoQuery & Sendable)?
     @State private var storageError: String?
@@ -28,7 +35,22 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if let storageError {
+            if let onboardingRequirements, !onboardingRequirements.isComplete {
+                OnboardingView(
+                    requirements: onboardingRequirements,
+                    progress: onboardingProgress,
+                    apiKeyStore: apiKeyStore,
+                    preferencesStore: agentPreferencesStore,
+                    photosAuthorizing: photosAuthorizing,
+                    onComplete: {
+                        let requirements = resolveOnboardingRequirements()
+                        self.onboardingRequirements = requirements
+                        if requirements.isComplete {
+                            Task { await openStorage() }
+                        }
+                    }
+                )
+            } else if let storageError {
                 Text("Couldn't open local storage: \(storageError)")
                     .padding()
             } else if let photoStore, let photoQuery {
@@ -70,8 +92,16 @@ struct ContentView: View {
         }
         .frame(minWidth: 640, minHeight: 480)
         .task {
-            await openStorage()
+            let requirements = resolveOnboardingRequirements()
+            onboardingRequirements = requirements
+            if requirements.isComplete {
+                await openStorage()
+            }
         }
+    }
+
+    private func resolveOnboardingRequirements() -> OnboardingRequirements {
+        OnboardingRequirementsResolver.resolve(progress: onboardingProgress, photosAuthorizing: photosAuthorizing)
     }
 
     private func openStorage() async {
